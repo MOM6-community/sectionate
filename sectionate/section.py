@@ -34,7 +34,7 @@ def linear_fit(x, y, x1, y1, x2, y2, eps=1e-12):
 def create_zero_contour(func):
     plt.figure()
     cont = plt.contour(func, 0)
-    # plt.show()
+    #plt.show()
     plt.close()
     return cont
 
@@ -56,8 +56,11 @@ def get_broken_line_from_contour(contour):
     '''
     # first guess of our broken line is the contour position in (x,y)
     # raw array has float grid indices
-    xseg_raw = contour.allsegs[1][0][:, 0]
-    yseg_raw = contour.allsegs[1][0][:, 1]
+    for item in contour.allsegs:
+        if len(item) !=0:
+            contourxy = item[0]
+    xseg_raw = contourxy[:, 0]
+    yseg_raw = contourxy[:, 1]
 
     # 1st guess: convert to integer
     nseg = len(xseg_raw)
@@ -88,7 +91,7 @@ def get_broken_line_from_contour(contour):
     return iseg, jseg
 
 
-def bound_broken_line(x, y, x1, y1, x2, y2, iseg, jseg):
+def bound_broken_line(x, y, x1, y1, x2, y2, iseg, jseg, tol=1.):
     """ subset the broken line between the bounds
 
     PARAMETERS:
@@ -129,11 +132,21 @@ def bound_broken_line(x, y, x1, y1, x2, y2, iseg, jseg):
     ymax = max(y1, y2)
     # We should test for numpy/xaray type for x and y and
     # use .values if xarray
+    xbndlow = xmin
+    xbndhigh = xmax
+    if np.isclose(xmin, xmax, atol=tol):
+        xbndlow -= tol
+        xbndhigh += tol
+    ybndlow = ymin
+    ybndhigh = ymax
+    if np.isclose(ymin, ymax, atol=tol):
+        ybndlow -= tol
+        ybndhigh += tol
 
     for k in range(nseg):
         x_pt = x[jseg[k], iseg[k]]
         y_pt = y[jseg[k], iseg[k]]
-        if (xmin <= x_pt <= xmax) and (ymin <= y_pt <= ymax):
+        if (xbndlow <= x_pt <= xbndhigh) and (ybndlow <= y_pt <= ybndhigh):
             iseg_bnd.append(iseg[k])
             jseg_bnd.append(jseg[k])
             xseg_bnd.append(x_pt)
