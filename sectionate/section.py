@@ -39,7 +39,7 @@ def create_zero_contour(func):
     return cont
 
 
-def get_broken_line_from_contour(contour):
+def get_broken_line_from_contour(contour, rounding='down'):
     ''' return a broken line from contour, suitable to integrate transport
 
     PARAMETERS:
@@ -64,19 +64,44 @@ def get_broken_line_from_contour(contour):
 
     # 1st guess: convert to integer
     nseg = len(xseg_raw)
-    iseg_fg = np.floor(xseg_raw)
-    jseg_fg = np.floor(yseg_raw)
+    if rounding == 'down':
+        iseg_fg = np.floor(xseg_raw).astype('int')
+        jseg_fg = np.floor(yseg_raw).astype('int')
+    elif rounding == 'up':
+        iseg_fg = np.ceil(xseg_raw).astype('int')
+        jseg_fg = np.ceil(yseg_raw).astype('int')
+    else:
+        raise ValueError("Unkown rounding, only up or down")
 
     # 2nd guess: create broken line along cell edges
     iseg_sg = [iseg_fg[0]]
     jseg_sg = [jseg_fg[0]]
 
     for kseg in np.arange(1, nseg):
-        if (iseg_fg[kseg] - iseg_fg[kseg-1] == 0) or \
+        if (iseg_fg[kseg] - iseg_fg[kseg-1] == 0) and \
            (jseg_fg[kseg] - jseg_fg[kseg-1] == 0):
-            # we are along one face of the cell so we're good
-            iseg_sg.append(iseg_fg[kseg])
-            jseg_sg.append(jseg_fg[kseg])
+           pass  # we don't want to double count points
+        elif (iseg_fg[kseg] - iseg_fg[kseg-1] == 0) or \
+           (jseg_fg[kseg] - jseg_fg[kseg-1] == 0):
+            # we are along one face of the cell
+            # check for "missing" points
+            if (np.abs(iseg_fg[kseg] - iseg_fg[kseg-1]) > 1):
+                print(f'filling {iseg_fg[kseg] - iseg_fg[kseg-1]} points in i between {iseg_fg[kseg-1]} and {iseg_fg[kseg]}')
+                # add missing points
+                for kpt in range(iseg_fg[kseg-1]+1, iseg_fg[kseg]+1):
+                    print(kpt)
+                    iseg_sg.append(kpt)
+                    jseg_sg.append(jseg_fg[kseg])
+            elif (np.abs(jseg_fg[kseg] - jseg_fg[kseg-1]) > 1):
+                print(f'filling {jseg_fg[kseg] - jseg_fg[kseg-1]} points in j between {jseg_fg[kseg-1]} and {jseg_fg[kseg]}')
+                # add missing points
+                for kpt in range(jseg_fg[kseg-1]+1, jseg_fg[kseg]+1):
+                    print(kpt)
+                    iseg_sg.append(iseg_fg[kseg])
+                    jseg_sg.append(kpt)
+            else:
+                iseg_sg.append(iseg_fg[kseg])
+                jseg_sg.append(jseg_fg[kseg])
         else:
             # we need to create two segments stopping by
             # an intermediate cell corner
@@ -156,16 +181,17 @@ def bound_broken_line(x, y, x1, y1, x2, y2, iseg, jseg, tol=1.):
     jseg_bnd = np.array(jseg_bnd)
     xseg_bnd = np.array(xseg_bnd)
     yseg_bnd = np.array(yseg_bnd)
+
     return iseg_bnd, jseg_bnd, xseg_bnd, yseg_bnd
 
 
-def create_section(x, y, x1, y1, x2, y2, method='linear'):
+def create_section(x, y, x1, y1, x2, y2, method='linear', tol=1., rounding='down'):
     if method == 'linear':
         func = linear_fit(x, y, x1, y1, x2, y2)
     else:
         ValueError('only linear is available now')
     cont = create_zero_contour(func)
-    iseg, jseg = get_broken_line_from_contour(cont)
+    iseg, jseg = get_broken_line_from_contour(cont, rounding=rounding)
     isec, jsec, xsec, ysec = bound_broken_line(x, y, x1, y1, x2, y2,
-                                               iseg, jseg)
+                                               iseg, jseg, tol=tol)
     return isec, jsec, xsec, ysec
