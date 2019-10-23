@@ -86,17 +86,15 @@ def get_broken_line_from_contour(contour, rounding='down'):
             # we are along one face of the cell
             # check for "missing" points
             if (np.abs(iseg_fg[kseg] - iseg_fg[kseg-1]) > 1):
-                print(f'filling {iseg_fg[kseg] - iseg_fg[kseg-1]} points in i between {iseg_fg[kseg-1]} and {iseg_fg[kseg]}')
+                print(f'info: filling {iseg_fg[kseg] - iseg_fg[kseg-1]} points in i between {iseg_fg[kseg-1]} and {iseg_fg[kseg]}')
                 # add missing points
                 for kpt in range(iseg_fg[kseg-1]+1, iseg_fg[kseg]+1):
-                    print(kpt)
                     iseg_sg.append(kpt)
                     jseg_sg.append(jseg_fg[kseg])
             elif (np.abs(jseg_fg[kseg] - jseg_fg[kseg-1]) > 1):
-                print(f'filling {jseg_fg[kseg] - jseg_fg[kseg-1]} points in j between {jseg_fg[kseg-1]} and {jseg_fg[kseg]}')
+                print(f'info: filling {jseg_fg[kseg] - jseg_fg[kseg-1]} points in j between {jseg_fg[kseg-1]} and {jseg_fg[kseg]}')
                 # add missing points
                 for kpt in range(jseg_fg[kseg-1]+1, jseg_fg[kseg]+1):
-                    print(kpt)
                     iseg_sg.append(iseg_fg[kseg])
                     jseg_sg.append(kpt)
             else:
@@ -185,13 +183,89 @@ def bound_broken_line(x, y, x1, y1, x2, y2, iseg, jseg, tol=1.):
     return iseg_bnd, jseg_bnd, xseg_bnd, yseg_bnd
 
 
-def create_section(x, y, x1, y1, x2, y2, method='linear', tol=1., rounding='down'):
+def distance_on_unit_sphere(lat1, long1, lat2, long2):
+
+    # Convert latitude and longitude to
+    # spherical coordinates in radians.
+    degrees_to_radians = np.pi/180.0
+
+    # phi = 90 - latitude
+    phi1 = (90.0 - lat1)*degrees_to_radians
+    phi2 = (90.0 - lat2)*degrees_to_radians
+
+    # theta = longitude
+    theta1 = long1*degrees_to_radians
+    theta2 = long2*degrees_to_radians
+    # Compute spherical distance from spherical coordinates.
+    # For two locations in spherical coordinates
+    # (1, theta, phi) and (1, theta, phi)
+    # cosine( arc length ) =
+    #    sin phi sin phi' cos(theta-theta') + cos phi cos phi'
+    # distance = rho * arc length
+    cos = (np.sin(phi1)*np.sin(phi2)*np.cos(theta1 - theta2) +
+           np.cos(phi1)*np.cos(phi2))
+    arc = np.arccos( cos )
+    # Remember to multiply arc by the radius of the earth
+    # in your favorite set of units to get length.
+    return arc
+
+
+def create_section(x, y, x1, y1, x2, y2, method='linear', tol=1., rounding='auto'):
     if method == 'linear':
         func = linear_fit(x, y, x1, y1, x2, y2)
     else:
         ValueError('only linear is available now')
     cont = create_zero_contour(func)
-    iseg, jseg = get_broken_line_from_contour(cont, rounding=rounding)
-    isec, jsec, xsec, ysec = bound_broken_line(x, y, x1, y1, x2, y2,
-                                               iseg, jseg, tol=tol)
+    # generate both contours (rounding up and down)
+    iseg_u, jseg_u = get_broken_line_from_contour(cont, rounding='up')
+    isec_u, jsec_u, xsec_u, ysec_u = bound_broken_line(x, y, x1, y1, x2, y2,
+                                                       iseg_u, jseg_u, tol=tol)
+    iseg_d, jseg_d = get_broken_line_from_contour(cont, rounding='down')
+    isec_d, jsec_d, xsec_d, ysec_d = bound_broken_line(x, y, x1, y1, x2, y2,
+                                                       iseg_d, jseg_d, tol=tol)
+
+    if rounding == 'down':
+        isec, jsec, xsec, ysec = isec_d, jsec_d, xsec_d, ysec_d
+    elif rounding == 'up':
+        isec, jsec, xsec, ysec = isec_u, jsec_u, xsec_u, ysec_u
+    elif rounding == 'best':
+        dist_d1 = []
+        dist_d2 = []
+        dist_u1 = []
+        dist_u2 = []
+        for k in range(len(xsec_d)):
+            dist_d1.append(distance_on_unit_sphere(y1, x1, ysec_d, xsec_d))
+            dist_d2.append(distance_on_unit_sphere(y2, x2, ysec_d, xsec_d))
+        for k in range(len(xsec_u)):
+            dist_u1.append(distance_on_unit_sphere(y1, x1, ysec_u, xsec_u))
+            dist_u2.append(distance_on_unit_sphere(y2, x2, ysec_u, xsec_u))
+
+        dist_d1 = np.array(dist_d1)
+        dist_d2 = np.array(dist_d2)
+        dist_u1 = np.array(dist_u1)
+        dist_u2 = np.array(dist_u2)
+        # start counting points
+        down = 0
+        up = 0
+        if dist_d1.min() < dist_u1.min():
+            down += 1
+        if dist_d2.min() < dist_u2.min():
+            down += 1
+        if dist_d1.min() > dist_u1.min():
+            up += 1
+        if dist_d2.min() > dist_u2.min():
+            up += 1
+
+        if (up > down) and (up != 0):
+            print('best fit is rounding up')
+            isec, jsec, xsec, ysec = isec_u, jsec_u, xsec_u, ysec_u
+        elif (down > up) and (down != 0):
+            print('best fit is rounding down')
+            isec, jsec, xsec, ysec = isec_d, jsec_d, xsec_d, ysec_d
+        else:
+            raise ValueError('cannot choose...')
+
+
+    else:
+        raise ValueError('unknown roundup type, only up, down and best')
     return isec, jsec, xsec, ysec
