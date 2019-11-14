@@ -221,17 +221,17 @@ def distance_on_unit_sphere(lat1, long1, lat2, long2):
     return arc
 
 
-def create_section(x, y, x1, y1, x2, y2, method='linear', tol=1., rounding='best'):
+def create_section(x, y, x1, y1, x2, y2, method='linear', tol=1., rounding='best', debug=False):
     if method == 'linear':
         func = linear_fit(x, y, x1, y1, x2, y2)
     else:
         ValueError('only linear is available now')
-    cont = create_zero_contour(func)
+    cont = create_zero_contour(func, debug=debug)
     # generate both contours (rounding up and down)
-    iseg_u, jseg_u = get_broken_line_from_contour(cont, rounding='up')
+    iseg_u, jseg_u = get_broken_line_from_contour(cont, rounding='up', debug=debug)
     isec_u, jsec_u, xsec_u, ysec_u = bound_broken_line(x, y, x1, y1, x2, y2,
                                                        iseg_u, jseg_u, tol=tol)
-    iseg_d, jseg_d = get_broken_line_from_contour(cont, rounding='down')
+    iseg_d, jseg_d = get_broken_line_from_contour(cont, rounding='down', debug=debug)
     isec_d, jsec_d, xsec_d, ysec_d = bound_broken_line(x, y, x1, y1, x2, y2,
                                                        iseg_d, jseg_d, tol=tol)
 
