@@ -31,10 +31,11 @@ def linear_fit(x, y, x1, y1, x2, y2, eps=1e-12):
     return func
 
 
-def create_zero_contour(func):
+def create_zero_contour(func, debug=False):
     plt.figure()
     cont = plt.contour(func, 0)
-    #plt.show()
+    if debug:
+        plt.show()
     plt.close()
     return cont
 
@@ -58,7 +59,15 @@ def get_broken_line_from_contour(contour, rounding='down', debug=False):
     # raw array has float grid indices
     for item in contour.allsegs:
         if len(item) !=0:
-            contourxy = item[0]
+            # discontinuous contours are stored in multiple arrays
+            # so we need to concatenate them
+            contourxy = None
+            for cont in item:
+                if len(cont) != 0:
+                    if contourxy is None:
+                        contourxy = cont
+                    else:
+                        contourxy = np.concatenate([contourxy, cont])
     xseg_raw = contourxy[:, 0]
     yseg_raw = contourxy[:, 1]
 
@@ -212,7 +221,7 @@ def distance_on_unit_sphere(lat1, long1, lat2, long2):
     return arc
 
 
-def create_section(x, y, x1, y1, x2, y2, method='linear', tol=1., rounding='auto'):
+def create_section(x, y, x1, y1, x2, y2, method='linear', tol=1., rounding='best'):
     if method == 'linear':
         func = linear_fit(x, y, x1, y1, x2, y2)
     else:
