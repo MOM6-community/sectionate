@@ -10,4 +10,4 @@ dependencies:
   - matplotlib
   - cartopy
   - pip:
-    - sectionate
+    - git+https://github.com/raphaeldussin/sectionate.git
