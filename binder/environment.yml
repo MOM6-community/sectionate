@@ -1,0 +1,13 @@
+name: root
+channels:
+  - conda-forge
+dependencies:
+  - python=3.6
+  - xarray
+  - numpy
+  - pandas
+  - netcdf4
+  - matplotlib
+  - cartopy
+  - pip:
+    - sectionate
