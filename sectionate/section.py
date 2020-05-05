@@ -40,7 +40,7 @@ def create_zero_contour(func, debug=False):
     return cont
 
 
-def get_broken_line_from_contour(contour, rounding='down', debug=False):
+def get_broken_line_from_contour(contour, rounding='down', debug=False, maxdist=10000000):
     ''' return a broken line from contour, suitable to integrate transport
 
     PARAMETERS:
@@ -94,14 +94,14 @@ def get_broken_line_from_contour(contour, rounding='down', debug=False):
            (jseg_fg[kseg] - jseg_fg[kseg-1] == 0):
             # we are along one face of the cell
             # check for "missing" points
-            if (np.abs(iseg_fg[kseg] - iseg_fg[kseg-1]) > 1):
+            if (maxdist > np.abs(iseg_fg[kseg] - iseg_fg[kseg-1]) > 1):
                 if debug:
                     print(f'info: filling {iseg_fg[kseg] - iseg_fg[kseg-1]} points in i between {iseg_fg[kseg-1]} and {iseg_fg[kseg]}')
                 # add missing points
                 for kpt in range(iseg_fg[kseg-1]+1, iseg_fg[kseg]+1):
                     iseg_sg.append(kpt)
                     jseg_sg.append(jseg_fg[kseg])
-            elif (np.abs(jseg_fg[kseg] - jseg_fg[kseg-1]) > 1):
+            elif (maxdist > np.abs(jseg_fg[kseg] - jseg_fg[kseg-1]) > 1):
                 if debug:
                     print(f'info: filling {jseg_fg[kseg] - jseg_fg[kseg-1]} points in j between {jseg_fg[kseg-1]} and {jseg_fg[kseg]}')
                 # add missing points
