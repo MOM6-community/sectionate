@@ -1,7 +1,214 @@
 import numpy as np
 import matplotlib.pyplot as plt
+import xarray as xr
 
 
+def create_section(gridlon, gridlat, lonstart ,latstart, lonend, latend):
+    """ replacement function for the old create_section """
+
+    iseg, jseg, lonseg, latseg = infer_broken_line_from_geo(lonstart ,latstart, lonend, latend, gridlon, gridlat)
+    return iseg, jseg, lonseg, latseg
+
+
+def infer_broken_line_from_geo(lonstart ,latstart, lonend, latend, gridlon, gridlat):
+    """ find the broken line joining (lonstart, latstart) and (lonend, latend) pairs
+
+    PARAMETERS:
+    -----------
+
+    lonstart: float
+        longitude of section starting point
+    latstart: float
+        latitude of section starting point 
+    lonend: float
+        longitude of section end point
+    latend: float
+        latitude of section end point 
+
+    gridlon: np.ndarray
+        2d array of longitude
+    gridlat: np.ndarray
+        2d array of latitude
+    
+    RETURNS:
+    -------
+
+    iseg, jseg: list of int
+        list of (i,j) pairs bounded by (i1, j1) and (i2, j2)
+    lonseg, latseg: list of float
+        corresponding longitude and latitude for iseg, jseg
+    """
+
+    istart, jstart = find_closest_grid_point(lonstart, latstart,
+                                             gridlon, gridlat)
+    iend, jend = find_closest_grid_point(lonend, latend,
+                                         gridlon, gridlat)
+    iseg, jseg, lonseg, latseg = infer_broken_line(istart, jstart, iend, jend,
+                                                   gridlon, gridlat)
+
+    return iseg, jseg, lonseg, latseg
+
+
+def infer_broken_line(i1, j1, i2, j2, gridlon, gridlat, nitmax=10000):
+    """ find the broken line joining (i1, j1) and (i2, j2) pairs
+
+    PARAMETERS:
+    -----------
+
+    i1: integer
+        i-coord of point1
+    j1: integer
+        j-coord of point1
+    i2: integer
+        i-coord of point2
+    j2: integer
+        j-coord of point2
+
+    gridlon: np.ndarray
+        2d array of longitude
+    gridlat: np.ndarray
+        2d array of latitude
+    
+    nitmax: int
+        max number of iteration allowed
+
+    RETURNS:
+    -------
+
+    iseg, jseg: list of int
+        list of (i,j) pairs bounded by (i1, j1) and (i2, j2)
+    lonseg, latseg: list of float
+        corresponding longitude and latitude for iseg, jseg
+    """
+
+    # init loop index to starting position
+    i = i1
+    j = j1
+
+    iseg = [i]  # add first point to list of points
+    jseg = [j]  # add first point to list of points
+    ct = 0  # counter for max iteration safeguard
+    ijflip = 1  # 1/0 flip to alternate i,j increment
+
+    # find direction of iteration
+    idir = np.sign(i2-i1)
+    jdir = np.sign(j2-j1)
+
+    # compute predicted slope of the section
+    # set limitslope flag if i1 == i2
+    if idir != 0:
+        slope = (j2 - j1)/(i2 -i1)
+        limitslope=False
+    else:
+        limitslope=True
+
+    # iterate until we reach end of section
+    while (( i != i2 ) or ( j != j2 )):
+        # safety precaution, exit after N iterations
+        if (ct > nitmax):
+            raise RuntimeError("max iterations reached")
+        ct += 1
+
+        # get 2 possible next points
+        inext = i + idir
+        jnext = j + jdir
+
+        # get prediction for next j point
+        if limitslope:
+            jpred = jnext
+        else:
+            jpred = j1 + slope * (inext - i1)
+
+        # compute distances from predicted j to j and jnext
+        dj_up = (jnext - jpred) * (jnext - jpred)
+        dj_down = (j - jpred) * (j - jpred)
+
+        # decide next increment based on distances
+        if dj_up == dj_down:
+            # if equal distance, increment i then flip switch
+            # to alternate direction of increments to j
+            # if jdir == 0 (j1 == j2), just increment in i
+            if ijflip == 1 or jdir == 0:
+                i = inext
+                ijflip = 0
+            else:
+                j = jnext
+                ijflip = 1
+        elif dj_up < dj_down:
+            # if predicted is closer to jnext, move to j = jnext
+            j = jnext
+        else:  # dj_up > dj_down
+            # else move to i = inext
+            i = inext
+
+        # add new point to list
+        iseg.append(i)
+        jseg.append(j)
+
+    # create lat/lon vectors from i,j pairs
+    lonseg = []
+    latseg = []
+    for jj, ji in zip(jseg, iseg):
+        lonseg.append(gridlon[jj, ji])
+        latseg.append(gridlat[jj, ji])
+    return iseg, jseg, lonseg, latseg
+
+
+def find_closest_grid_point(lon, lat, gridlon, gridlat):
+    """ find integer indices of closest grid point in grid of coordinates
+    gridlon, gridlat for a given geographical lon/lat.
+
+    PARAMETERS:
+    -----------
+        lon (float): longitude of point to find
+        lat (float): latitude of point to find
+        gridlon (numpy.ndarray): grid longitudes
+        gridlat (numpy.ndarray): grid latitudes
+    
+    RETURNS:
+    --------
+
+    iclose, jclose: integer
+        grid indices for geographical point of interest
+    """
+
+    if isinstance(gridlon, xr.core.dataarray.DataArray):
+        gridlon = gridlon.values
+    if isinstance(gridlat, xr.core.dataarray.DataArray):
+        gridlat = gridlat.values
+    dist = distance_on_unit_sphere(lat, lon, gridlat, gridlon)
+    jclose, iclose = np.unravel_index(dist.argmin(), gridlon.shape)
+    return iclose, jclose
+
+
+def distance_on_unit_sphere(lat1, long1, lat2, long2):
+
+    # Convert latitude and longitude to
+    # spherical coordinates in radians.
+    degrees_to_radians = np.pi/180.0
+
+    # phi = 90 - latitude
+    phi1 = (90.0 - lat1)*degrees_to_radians
+    phi2 = (90.0 - lat2)*degrees_to_radians
+
+    # theta = longitude
+    theta1 = long1*degrees_to_radians
+    theta2 = long2*degrees_to_radians
+    # Compute spherical distance from spherical coordinates.
+    # For two locations in spherical coordinates
+    # (1, theta, phi) and (1, theta, phi)
+    # cosine( arc length ) =
+    #    sin phi sin phi' cos(theta-theta') + cos phi cos phi'
+    # distance = rho * arc length
+    cos = (np.sin(phi1)*np.sin(phi2)*np.cos(theta1 - theta2) +
+           np.cos(phi1)*np.cos(phi2))
+    arc = np.arccos( cos )
+    # Remember to multiply arc by the radius of the earth
+    # in your favorite set of units to get length.
+    return arc
+
+
+#------------------------- older functions, here for legacy purposes ------------------
 def linear_fit(x, y, x1, y1, x2, y2, eps=1e-12):
     """ generate the function for which we want to find zero contour
 
@@ -194,34 +401,7 @@ def bound_broken_line(x, y, x1, y1, x2, y2, iseg, jseg, tol=1.):
     return iseg_bnd, jseg_bnd, xseg_bnd, yseg_bnd
 
 
-def distance_on_unit_sphere(lat1, long1, lat2, long2):
-
-    # Convert latitude and longitude to
-    # spherical coordinates in radians.
-    degrees_to_radians = np.pi/180.0
-
-    # phi = 90 - latitude
-    phi1 = (90.0 - lat1)*degrees_to_radians
-    phi2 = (90.0 - lat2)*degrees_to_radians
-
-    # theta = longitude
-    theta1 = long1*degrees_to_radians
-    theta2 = long2*degrees_to_radians
-    # Compute spherical distance from spherical coordinates.
-    # For two locations in spherical coordinates
-    # (1, theta, phi) and (1, theta, phi)
-    # cosine( arc length ) =
-    #    sin phi sin phi' cos(theta-theta') + cos phi cos phi'
-    # distance = rho * arc length
-    cos = (np.sin(phi1)*np.sin(phi2)*np.cos(theta1 - theta2) +
-           np.cos(phi1)*np.cos(phi2))
-    arc = np.arccos( cos )
-    # Remember to multiply arc by the radius of the earth
-    # in your favorite set of units to get length.
-    return arc
-
-
-def create_section(x, y, x1, y1, x2, y2, method='linear', tol=1., rounding='best', debug=False):
+def create_section_old(x, y, x1, y1, x2, y2, method='linear', tol=1., rounding='best', debug=False):
     if method == 'linear':
         func = linear_fit(x, y, x1, y1, x2, y2)
     else:
@@ -275,8 +455,6 @@ def create_section(x, y, x1, y1, x2, y2, method='linear', tol=1., rounding='best
             isec, jsec, xsec, ysec = isec_d, jsec_d, xsec_d, ysec_d
         else:
             raise ValueError('cannot choose...')
-
-
     else:
         raise ValueError('unknown roundup type, only up, down and best')
     return isec, jsec, xsec, ysec

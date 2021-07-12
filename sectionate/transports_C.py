@@ -15,7 +15,7 @@ def MOM6_UVpoints_from_section(isec, jsec):
             elif jsec[k] < jsec[k-1]:
                 point = ('U', isec[k], jsec[k-1],)
             else:
-                raise ValueError("cannot find U-V point between 2 identical Q-points")
+                raise ValueError(f"cannot find U-V point between 2 identical Q-points at i,j = {isec[k]}, {jsec[k]}")
         elif jsec[k] == jsec[k-1]:
             # V-point
             if isec[k] > isec[k-1]:
@@ -23,7 +23,7 @@ def MOM6_UVpoints_from_section(isec, jsec):
             elif isec[k] < isec[k-1]:
                 point = ('V', isec[k], jsec[k-1],)
             else:
-                raise ValueError("cannot find U-V point between 2 identical Q-points")
+                raise ValueError(f"cannot find U-V point between 2 identical Q-points at i,j = {isec[k]}, {jsec[k]}")
         uvpoints.append(point)
     return uvpoints
 
