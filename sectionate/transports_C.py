@@ -178,3 +178,48 @@ def MOM6_compute_transport(ds, isec, jsec, utr="umo", vtr="vmo", vertdim="z_l"):
     Trp.attrs.update(ds[utr].attrs)
 
     return Trp
+
+
+def MOM6_normal_transport(
+    ds,
+    isec,
+    jsec,
+    utr="umo",
+    vtr="vmo",
+    layer="z_l",
+    interface="z_i",
+    outname="uvnormal",
+):
+
+    if layer.replace("_l", "") != interface.replace("_i", ""):
+        raise ValueError("Inconsistent layer and interface depth variables")
+
+    uvpoints = MOM6_UVpoints_from_section(isec, jsec)
+
+    out = None
+    for pt in uvpoints:
+        if pt[0] == "U":
+            tmp = (
+                ds[utr]
+                .isel(xq=pt[1], yh=pt[2])
+                .rename({"yh": "ysec", "xq": "xsec"})
+                .expand_dims(dim="sect", axis=-1)
+            )
+        if pt[0] == "V":
+            tmp = (
+                ds[vtr]
+                .isel(xh=pt[1], yq=pt[2])
+                .rename({"yq": "ysec", "xh": "xsec"})
+                .expand_dims(dim="sect", axis=-1)
+            )
+        if out is None:
+            out = tmp.copy()
+        else:
+            out = xr.concat([out, tmp], dim="sect")
+
+    dsout = xr.Dataset()
+    dsout[outname] = out
+    dsout[layer] = ds[layer]
+    dsout[interface] = ds[interface]
+
+    return dsout

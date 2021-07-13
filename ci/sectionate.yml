@@ -1,0 +1,26 @@
+name: sectionate
+channels:
+  - conda-forge
+dependencies:
+  - python=3.8
+  - cartopy
+  - cftime
+  - dask
+  - ipython
+  - jupyterlab
+  - matplotlib
+  - netcdf4
+  - numba
+  - numpy
+  - pip
+  - pydap
+  - pytest
+  - regionmask
+  - seawater
+  - scipy
+  - xarray
+  - xgcm
+  - pip:
+    - cmip_basins
+    - xoverturning
+    - git+https://github.com/raphaeldussin/sectionate.git
