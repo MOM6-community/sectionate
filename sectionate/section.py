@@ -3,14 +3,16 @@ import matplotlib.pyplot as plt
 import xarray as xr
 
 
-def create_section(gridlon, gridlat, lonstart ,latstart, lonend, latend):
+def create_section(gridlon, gridlat, lonstart, latstart, lonend, latend):
     """ replacement function for the old create_section """
 
-    iseg, jseg, lonseg, latseg = infer_broken_line_from_geo(lonstart ,latstart, lonend, latend, gridlon, gridlat)
+    iseg, jseg, lonseg, latseg = infer_broken_line_from_geo(
+        lonstart, latstart, lonend, latend, gridlon, gridlat
+    )
     return iseg, jseg, lonseg, latseg
 
 
-def infer_broken_line_from_geo(lonstart ,latstart, lonend, latend, gridlon, gridlat):
+def infer_broken_line_from_geo(lonstart, latstart, lonend, latend, gridlon, gridlat):
     """ find the broken line joining (lonstart, latstart) and (lonend, latend) pairs
 
     PARAMETERS:
@@ -39,12 +41,11 @@ def infer_broken_line_from_geo(lonstart ,latstart, lonend, latend, gridlon, grid
         corresponding longitude and latitude for iseg, jseg
     """
 
-    istart, jstart = find_closest_grid_point(lonstart, latstart,
-                                             gridlon, gridlat)
-    iend, jend = find_closest_grid_point(lonend, latend,
-                                         gridlon, gridlat)
-    iseg, jseg, lonseg, latseg = infer_broken_line(istart, jstart, iend, jend,
-                                                   gridlon, gridlat)
+    istart, jstart = find_closest_grid_point(lonstart, latstart, gridlon, gridlat)
+    iend, jend = find_closest_grid_point(lonend, latend, gridlon, gridlat)
+    iseg, jseg, lonseg, latseg = infer_broken_line(
+        istart, jstart, iend, jend, gridlon, gridlat
+    )
 
     return iseg, jseg, lonseg, latseg
 
@@ -91,21 +92,21 @@ def infer_broken_line(i1, j1, i2, j2, gridlon, gridlat, nitmax=10000):
     ijflip = 1  # 1/0 flip to alternate i,j increment
 
     # find direction of iteration
-    idir = np.sign(i2-i1)
-    jdir = np.sign(j2-j1)
+    idir = np.sign(i2 - i1)
+    jdir = np.sign(j2 - j1)
 
     # compute predicted slope of the section
     # set limitslope flag if i1 == i2
     if idir != 0:
-        slope = (j2 - j1)/(i2 -i1)
-        limitslope=False
+        slope = (j2 - j1) / (i2 - i1)
+        limitslope = False
     else:
-        limitslope=True
+        limitslope = True
 
     # iterate until we reach end of section
-    while (( i != i2 ) or ( j != j2 )):
+    while (i != i2) or (j != j2):
         # safety precaution, exit after N iterations
-        if (ct > nitmax):
+        if ct > nitmax:
             raise RuntimeError("max iterations reached")
         ct += 1
 
@@ -185,30 +186,31 @@ def distance_on_unit_sphere(lat1, long1, lat2, long2):
 
     # Convert latitude and longitude to
     # spherical coordinates in radians.
-    degrees_to_radians = np.pi/180.0
+    degrees_to_radians = np.pi / 180.0
 
     # phi = 90 - latitude
-    phi1 = (90.0 - lat1)*degrees_to_radians
-    phi2 = (90.0 - lat2)*degrees_to_radians
+    phi1 = (90.0 - lat1) * degrees_to_radians
+    phi2 = (90.0 - lat2) * degrees_to_radians
 
     # theta = longitude
-    theta1 = long1*degrees_to_radians
-    theta2 = long2*degrees_to_radians
+    theta1 = long1 * degrees_to_radians
+    theta2 = long2 * degrees_to_radians
     # Compute spherical distance from spherical coordinates.
     # For two locations in spherical coordinates
     # (1, theta, phi) and (1, theta, phi)
     # cosine( arc length ) =
     #    sin phi sin phi' cos(theta-theta') + cos phi cos phi'
     # distance = rho * arc length
-    cos = (np.sin(phi1)*np.sin(phi2)*np.cos(theta1 - theta2) +
-           np.cos(phi1)*np.cos(phi2))
-    arc = np.arccos( cos )
+    cos = np.sin(phi1) * np.sin(phi2) * np.cos(theta1 - theta2) + np.cos(phi1) * np.cos(
+        phi2
+    )
+    arc = np.arccos(cos)
     # Remember to multiply arc by the radius of the earth
     # in your favorite set of units to get length.
     return arc
 
 
-#------------------------- older functions, here for legacy purposes ------------------
+# ------------------------- older functions, here for legacy purposes ------------------
 def linear_fit(x, y, x1, y1, x2, y2, eps=1e-12):
     """ generate the function for which we want to find zero contour
 
@@ -233,8 +235,8 @@ def linear_fit(x, y, x1, y1, x2, y2, eps=1e-12):
     x2 = float(x2)
     y2 = float(y2)
 
-    alpha = (y2-y1) / (x2-x1+eps)
-    func = y - y1 - alpha * (x-x1)
+    alpha = (y2 - y1) / (x2 - x1 + eps)
+    func = y - y1 - alpha * (x - x1)
     return func
 
 
@@ -247,8 +249,10 @@ def create_zero_contour(func, debug=False):
     return cont
 
 
-def get_broken_line_from_contour(contour, rounding='down', debug=False, maxdist=10000000):
-    ''' return a broken line from contour, suitable to integrate transport
+def get_broken_line_from_contour(
+    contour, rounding="down", debug=False, maxdist=10000000
+):
+    """ return a broken line from contour, suitable to integrate transport
 
     PARAMETERS:
     -----------
@@ -261,11 +265,11 @@ def get_broken_line_from_contour(contour, rounding='down', debug=False, maxdist=
 
     iseg, jseg: numpy.ndarray
         i,j indices of broken line
-    '''
+    """
     # first guess of our broken line is the contour position in (x,y)
     # raw array has float grid indices
     for item in contour.allsegs:
-        if len(item) !=0:
+        if len(item) != 0:
             # discontinuous contours are stored in multiple arrays
             # so we need to concatenate them
             contourxy = None
@@ -280,12 +284,12 @@ def get_broken_line_from_contour(contour, rounding='down', debug=False, maxdist=
 
     # 1st guess: convert to integer
     nseg = len(xseg_raw)
-    if rounding == 'down':
-        iseg_fg = np.floor(xseg_raw).astype('int')
-        jseg_fg = np.floor(yseg_raw).astype('int')
-    elif rounding == 'up':
-        iseg_fg = np.ceil(xseg_raw).astype('int')
-        jseg_fg = np.ceil(yseg_raw).astype('int')
+    if rounding == "down":
+        iseg_fg = np.floor(xseg_raw).astype("int")
+        jseg_fg = np.floor(yseg_raw).astype("int")
+    elif rounding == "up":
+        iseg_fg = np.ceil(xseg_raw).astype("int")
+        jseg_fg = np.ceil(yseg_raw).astype("int")
     else:
         raise ValueError("Unkown rounding, only up or down")
 
@@ -294,25 +298,31 @@ def get_broken_line_from_contour(contour, rounding='down', debug=False, maxdist=
     jseg_sg = [jseg_fg[0]]
 
     for kseg in np.arange(1, nseg):
-        if (iseg_fg[kseg] - iseg_fg[kseg-1] == 0) and \
-           (jseg_fg[kseg] - jseg_fg[kseg-1] == 0):
-           pass  # we don't want to double count points
-        elif (iseg_fg[kseg] - iseg_fg[kseg-1] == 0) or \
-           (jseg_fg[kseg] - jseg_fg[kseg-1] == 0):
+        if (iseg_fg[kseg] - iseg_fg[kseg - 1] == 0) and (
+            jseg_fg[kseg] - jseg_fg[kseg - 1] == 0
+        ):
+            pass  # we don't want to double count points
+        elif (iseg_fg[kseg] - iseg_fg[kseg - 1] == 0) or (
+            jseg_fg[kseg] - jseg_fg[kseg - 1] == 0
+        ):
             # we are along one face of the cell
             # check for "missing" points
-            if (maxdist > np.abs(iseg_fg[kseg] - iseg_fg[kseg-1]) > 1):
+            if maxdist > np.abs(iseg_fg[kseg] - iseg_fg[kseg - 1]) > 1:
                 if debug:
-                    print(f'info: filling {iseg_fg[kseg] - iseg_fg[kseg-1]} points in i between {iseg_fg[kseg-1]} and {iseg_fg[kseg]}')
+                    print(
+                        f"info: filling {iseg_fg[kseg] - iseg_fg[kseg-1]} points in i between {iseg_fg[kseg-1]} and {iseg_fg[kseg]}"
+                    )
                 # add missing points
-                for kpt in range(iseg_fg[kseg-1]+1, iseg_fg[kseg]+1):
+                for kpt in range(iseg_fg[kseg - 1] + 1, iseg_fg[kseg] + 1):
                     iseg_sg.append(kpt)
                     jseg_sg.append(jseg_fg[kseg])
-            elif (maxdist > np.abs(jseg_fg[kseg] - jseg_fg[kseg-1]) > 1):
+            elif maxdist > np.abs(jseg_fg[kseg] - jseg_fg[kseg - 1]) > 1:
                 if debug:
-                    print(f'info: filling {jseg_fg[kseg] - jseg_fg[kseg-1]} points in j between {jseg_fg[kseg-1]} and {jseg_fg[kseg]}')
+                    print(
+                        f"info: filling {jseg_fg[kseg] - jseg_fg[kseg-1]} points in j between {jseg_fg[kseg-1]} and {jseg_fg[kseg]}"
+                    )
                 # add missing points
-                for kpt in range(jseg_fg[kseg-1]+1, jseg_fg[kseg]+1):
+                for kpt in range(jseg_fg[kseg - 1] + 1, jseg_fg[kseg] + 1):
                     iseg_sg.append(iseg_fg[kseg])
                     jseg_sg.append(kpt)
             else:
@@ -322,17 +332,17 @@ def get_broken_line_from_contour(contour, rounding='down', debug=False, maxdist=
             # we need to create two segments stopping by
             # an intermediate cell corner
             iseg_sg.append(iseg_fg[kseg])
-            jseg_sg.append(jseg_fg[kseg-1])
+            jseg_sg.append(jseg_fg[kseg - 1])
             iseg_sg.append(iseg_fg[kseg])
             jseg_sg.append(jseg_fg[kseg])
 
-    iseg = np.array(iseg_sg, np.dtype('i'))
-    jseg = np.array(jseg_sg, np.dtype('i'))
+    iseg = np.array(iseg_sg, np.dtype("i"))
+    jseg = np.array(jseg_sg, np.dtype("i"))
 
     return iseg, jseg
 
 
-def bound_broken_line(x, y, x1, y1, x2, y2, iseg, jseg, tol=1.):
+def bound_broken_line(x, y, x1, y1, x2, y2, iseg, jseg, tol=1.0):
     """ subset the broken line between the bounds
 
     PARAMETERS:
@@ -401,25 +411,29 @@ def bound_broken_line(x, y, x1, y1, x2, y2, iseg, jseg, tol=1.):
     return iseg_bnd, jseg_bnd, xseg_bnd, yseg_bnd
 
 
-def create_section_old(x, y, x1, y1, x2, y2, method='linear', tol=1., rounding='best', debug=False):
-    if method == 'linear':
+def create_section_old(
+    x, y, x1, y1, x2, y2, method="linear", tol=1.0, rounding="best", debug=False
+):
+    if method == "linear":
         func = linear_fit(x, y, x1, y1, x2, y2)
     else:
-        ValueError('only linear is available now')
+        ValueError("only linear is available now")
     cont = create_zero_contour(func, debug=debug)
     # generate both contours (rounding up and down)
-    iseg_u, jseg_u = get_broken_line_from_contour(cont, rounding='up', debug=debug)
-    isec_u, jsec_u, xsec_u, ysec_u = bound_broken_line(x, y, x1, y1, x2, y2,
-                                                       iseg_u, jseg_u, tol=tol)
-    iseg_d, jseg_d = get_broken_line_from_contour(cont, rounding='down', debug=debug)
-    isec_d, jsec_d, xsec_d, ysec_d = bound_broken_line(x, y, x1, y1, x2, y2,
-                                                       iseg_d, jseg_d, tol=tol)
+    iseg_u, jseg_u = get_broken_line_from_contour(cont, rounding="up", debug=debug)
+    isec_u, jsec_u, xsec_u, ysec_u = bound_broken_line(
+        x, y, x1, y1, x2, y2, iseg_u, jseg_u, tol=tol
+    )
+    iseg_d, jseg_d = get_broken_line_from_contour(cont, rounding="down", debug=debug)
+    isec_d, jsec_d, xsec_d, ysec_d = bound_broken_line(
+        x, y, x1, y1, x2, y2, iseg_d, jseg_d, tol=tol
+    )
 
-    if rounding == 'down':
+    if rounding == "down":
         isec, jsec, xsec, ysec = isec_d, jsec_d, xsec_d, ysec_d
-    elif rounding == 'up':
+    elif rounding == "up":
         isec, jsec, xsec, ysec = isec_u, jsec_u, xsec_u, ysec_u
-    elif rounding == 'best':
+    elif rounding == "best":
         dist_d1 = []
         dist_d2 = []
         dist_u1 = []
@@ -448,13 +462,13 @@ def create_section_old(x, y, x1, y1, x2, y2, method='linear', tol=1., rounding='
             up += 1
 
         if (up > down) and (up != 0):
-            print('best fit is rounding up')
+            print("best fit is rounding up")
             isec, jsec, xsec, ysec = isec_u, jsec_u, xsec_u, ysec_u
         elif (down > up) and (down != 0):
-            print('best fit is rounding down')
+            print("best fit is rounding down")
             isec, jsec, xsec, ysec = isec_d, jsec_d, xsec_d, ysec_d
         else:
-            raise ValueError('cannot choose...')
+            raise ValueError("cannot choose...")
     else:
-        raise ValueError('unknown roundup type, only up, down and best')
+        raise ValueError("unknown roundup type, only up, down and best")
     return isec, jsec, xsec, ysec
