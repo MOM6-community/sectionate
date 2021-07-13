@@ -3,6 +3,58 @@ import matplotlib.pyplot as plt
 import xarray as xr
 
 
+def create_section_composite(gridlon, gridlat, segment_lons, segment_lats):
+    """create section from list of segments
+
+    PARAMETERS:
+    -----------
+
+    gridlon: np.ndarray
+        2d array of longitude
+    gridlat: np.ndarray
+        2d array of latitude
+    segment_lons: list of float
+        longitude of section starting, intermediate and end points
+    segment_lats: list of float
+        latitude of section starting, intermediate and end points
+
+
+    RETURNS:
+    -------
+
+    isect, jsect: list of int
+        list of (i,j) pairs for section
+    xsect, ysect: list of float
+        corresponding longitude and latitude for isect, jsect
+
+    """
+
+    isect = np.array([], dtype=np.int64)
+    jsect = np.array([], dtype=np.int64)
+    xsect = np.array([])
+    ysect = np.array([])
+
+    if len(segment_lons) != len(segment_lats):
+        raise ValueError("segment_lons and segment_lats should have the same lenght")
+
+    for k in range(len(segment_lons) - 1):
+        iseg, jseg, xseg, yseg = create_section(
+            gridlon,
+            gridlat,
+            segment_lons[k],
+            segment_lats[k],
+            segment_lons[k + 1],
+            segment_lats[k + 1],
+        )
+
+        isect = np.concatenate([isect, iseg[:-1]], axis=0)
+        jsect = np.concatenate([jsect, jseg[:-1]], axis=0)
+        xsect = np.concatenate([xsect, xseg[:-1]], axis=0)
+        ysect = np.concatenate([ysect, yseg[:-1]], axis=0)
+
+    return isect, jsect, xsect, ysect
+
+
 def create_section(gridlon, gridlat, lonstart, latstart, lonend, latend):
     """ replacement function for the old create_section """
 
@@ -13,7 +65,7 @@ def create_section(gridlon, gridlat, lonstart, latstart, lonend, latend):
 
 
 def infer_broken_line_from_geo(lonstart, latstart, lonend, latend, gridlon, gridlat):
-    """ find the broken line joining (lonstart, latstart) and (lonend, latend) pairs
+    """find the broken line joining (lonstart, latstart) and (lonend, latend) pairs
 
     PARAMETERS:
     -----------
@@ -21,17 +73,17 @@ def infer_broken_line_from_geo(lonstart, latstart, lonend, latend, gridlon, grid
     lonstart: float
         longitude of section starting point
     latstart: float
-        latitude of section starting point 
+        latitude of section starting point
     lonend: float
         longitude of section end point
     latend: float
-        latitude of section end point 
+        latitude of section end point
 
     gridlon: np.ndarray
         2d array of longitude
     gridlat: np.ndarray
         2d array of latitude
-    
+
     RETURNS:
     -------
 
@@ -51,7 +103,7 @@ def infer_broken_line_from_geo(lonstart, latstart, lonend, latend, gridlon, grid
 
 
 def infer_broken_line(i1, j1, i2, j2, gridlon, gridlat, nitmax=10000):
-    """ find the broken line joining (i1, j1) and (i2, j2) pairs
+    """find the broken line joining (i1, j1) and (i2, j2) pairs
 
     PARAMETERS:
     -----------
@@ -69,7 +121,7 @@ def infer_broken_line(i1, j1, i2, j2, gridlon, gridlat, nitmax=10000):
         2d array of longitude
     gridlat: np.ndarray
         2d array of latitude
-    
+
     nitmax: int
         max number of iteration allowed
 
@@ -156,7 +208,7 @@ def infer_broken_line(i1, j1, i2, j2, gridlon, gridlat, nitmax=10000):
 
 
 def find_closest_grid_point(lon, lat, gridlon, gridlat):
-    """ find integer indices of closest grid point in grid of coordinates
+    """find integer indices of closest grid point in grid of coordinates
     gridlon, gridlat for a given geographical lon/lat.
 
     PARAMETERS:
@@ -165,7 +217,7 @@ def find_closest_grid_point(lon, lat, gridlon, gridlat):
         lat (float): latitude of point to find
         gridlon (numpy.ndarray): grid longitudes
         gridlat (numpy.ndarray): grid latitudes
-    
+
     RETURNS:
     --------
 
@@ -212,7 +264,7 @@ def distance_on_unit_sphere(lat1, long1, lat2, long2):
 
 # ------------------------- older functions, here for legacy purposes ------------------
 def linear_fit(x, y, x1, y1, x2, y2, eps=1e-12):
-    """ generate the function for which we want to find zero contour
+    """generate the function for which we want to find zero contour
 
     PARAMETERS:
     -----------
@@ -252,7 +304,7 @@ def create_zero_contour(func, debug=False):
 def get_broken_line_from_contour(
     contour, rounding="down", debug=False, maxdist=10000000
 ):
-    """ return a broken line from contour, suitable to integrate transport
+    """return a broken line from contour, suitable to integrate transport
 
     PARAMETERS:
     -----------
@@ -343,7 +395,7 @@ def get_broken_line_from_contour(
 
 
 def bound_broken_line(x, y, x1, y1, x2, y2, iseg, jseg, tol=1.0):
-    """ subset the broken line between the bounds
+    """subset the broken line between the bounds
 
     PARAMETERS:
     -----------
