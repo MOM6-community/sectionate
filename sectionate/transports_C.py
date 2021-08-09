@@ -19,12 +19,14 @@ def MOM6_UVpoints_from_section(isec, jsec):
                     "U",
                     isec[k],
                     jsec[k],
+                    "up",
                 )
             elif jsec[k] < jsec[k - 1]:
                 point = (
                     "U",
                     isec[k],
                     jsec[k - 1],
+                    "down",
                 )
             else:
                 raise ValueError(
@@ -37,12 +39,14 @@ def MOM6_UVpoints_from_section(isec, jsec):
                     "V",
                     isec[k],
                     jsec[k],
+                    "up",
                 )
             elif isec[k] < isec[k - 1]:
                 point = (
                     "V",
                     isec[k],
                     jsec[k - 1],
+                    "down",
                 )
             else:
                 raise ValueError(
@@ -191,20 +195,27 @@ def MOM6_normal_transport(
     outname="uvnormal",
 ):
 
-    if layer.replace("_l", "") != interface.replace("_i", ""):
+    if layer.replace("_", " ").split()[0] != interface.replace("_", " ").split()[0]:
         raise ValueError("Inconsistent layer and interface depth variables")
 
     uvpoints = MOM6_UVpoints_from_section(isec, jsec)
-
+    norm = []
     out = None
+
     for pt in uvpoints:
         if pt[0] == "U":
+
+            fact = -1 if pt[3] == "up" else 1
+
             tmp = (
                 ds[utr]
                 .isel(xq=pt[1], yh=pt[2])
                 .rename({"yh": "ysec", "xq": "xsec"})
                 .expand_dims(dim="sect", axis=-1)
-            )
+            ) * fact
+
+            norm.append(fact)
+
         if pt[0] == "V":
             tmp = (
                 ds[vtr]
@@ -212,6 +223,7 @@ def MOM6_normal_transport(
                 .rename({"yq": "ysec", "xh": "xsec"})
                 .expand_dims(dim="sect", axis=-1)
             )
+            norm.append(np.nan)
         if out is None:
             out = tmp.copy()
         else:
@@ -221,5 +233,6 @@ def MOM6_normal_transport(
     dsout[outname] = out
     dsout[layer] = ds[layer]
     dsout[interface] = ds[interface]
+    dsout["norm"] = xr.DataArray(norm, dims=('sect'))
 
     return dsout
