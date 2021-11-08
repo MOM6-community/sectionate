@@ -24,7 +24,7 @@ def MOM6_UVpoints_from_section(isec, jsec):
             elif jsec[k] < jsec[k - 1]:
                 point = (
                     "U",
-                    isec[k],
+                    isec[k - 1],
                     jsec[k - 1],
                     "down",
                 )
@@ -44,7 +44,7 @@ def MOM6_UVpoints_from_section(isec, jsec):
             elif isec[k] < isec[k - 1]:
                 point = (
                     "V",
-                    isec[k],
+                    isec[k - 1],
                     jsec[k - 1],
                     "down",
                 )
