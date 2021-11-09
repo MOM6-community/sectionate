@@ -1,4 +1,5 @@
 import xarray as xr
+from sectionate.transports_C import MOM6_UVpoints_from_section
 
 
 def get_all_points_from_section(isec, jsec):
@@ -26,7 +27,7 @@ def get_all_points_from_section(isec, jsec):
     return pts
 
 
-def MOM6_extract_hydro(da, isec, jsec):
+def MOM6_extract_hydro(da, isec, jsec, xdim="xh", ydim="yh", section="sect"):
     """extract data along the broken line of (isec, jsec) for plotting
 
     PARAMETERS:
@@ -38,12 +39,41 @@ def MOM6_extract_hydro(da, isec, jsec):
         indices of i-points of broken line
     jsec: int
         indices of j-points of broken line
+    xdim: str
+        name of the x-dimension of tracer array. Defaults to 'xh'.
+    ydim: str
+        name of the y-dimension of tracer array. Defaults to 'yh'.
+    section: str
+        name of the produced axis for along section data. Defaults to 'sect'.
 
     RETURNS:
     --------
 
-    xarray.DataArray with data sampled at i and j points on section
+    xarray.DataArray with data sampled on U and V points of the section.
     """
 
-    idx = get_all_points_from_section(isec, jsec)
-    return da.isel(yh=idx["j"], xh=idx["i"])
+    # get U, V points from broken line
+    uvpoints = MOM6_UVpoints_from_section(isec, jsec)
+
+    # interp onto U or V point
+    def extract_1pt(da, uvpoint, xdim=xdim, ydim=ydim):
+        pttype, i, j, _ = uvpoint
+        if pttype == 'U':
+           interp_data = 0.5 * (da.isel({xdim:i, ydim:j}) + da.isel({xdim:i+1, ydim:j}))
+        elif pttype == 'V':
+           interp_data = 0.5 * (da.isel({xdim:i, ydim:j}) + da.isel({xdim:i, ydim:j+1}))
+        else:
+           raise ValueError("point-type can only be U or V")
+        if xdim in interp_data.coords:
+            interp_data = interp_data.reset_coords(names=xdim, drop=True)
+        if ydim in interp_data.coords:
+            interp_data = interp_data.reset_coords(names=ydim, drop=True)
+        return interp_data.expand_dims(section)
+
+    hydro = extract_1pt(da, uvpoints[0])
+    for pt in uvpoints[1:]:
+        interp_data = extract_1pt(da, pt)
+        # concat over new dimension
+        hydro = xr.concat([hydro, interp_data], dim=section)
+
+    return hydro
