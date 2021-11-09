@@ -193,6 +193,7 @@ def MOM6_normal_transport(
     layer="z_l",
     interface="z_i",
     outname="uvnormal",
+    section="sect",
 ):
 
     if layer.replace("_", " ").split()[0] != interface.replace("_", " ").split()[0]:
@@ -221,18 +222,18 @@ def MOM6_normal_transport(
                 ds[vtr]
                 .isel(xh=pt[1], yq=pt[2])
                 .rename({"yq": "ysec", "xh": "xsec"})
-                .expand_dims(dim="sect", axis=-1)
+                .expand_dims(dim=section, axis=-1)
             )
             norm.append(np.nan)
         if out is None:
             out = tmp.copy()
         else:
-            out = xr.concat([out, tmp], dim="sect")
+            out = xr.concat([out, tmp], dim=section)
 
     dsout = xr.Dataset()
     dsout[outname] = out
     dsout[layer] = ds[layer]
     dsout[interface] = ds[interface]
-    dsout["norm"] = xr.DataArray(norm, dims=('sect'))
+    dsout["norm"] = xr.DataArray(norm, dims=(section))
 
     return dsout
