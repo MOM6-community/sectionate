@@ -59,9 +59,11 @@ def MOM6_extract_hydro(da, isec, jsec, xdim="xh", ydim="yh", section="sect"):
     def extract_1pt(da, uvpoint, xdim=xdim, ydim=ydim):
         pttype, i, j, _ = uvpoint
         if pttype == 'U':
-           interp_data = 0.5 * (da.isel({xdim:i, ydim:j}) + da.isel({xdim:i+1, ydim:j}))
+           #interp_data = 0.5 * (da.isel({xdim:i, ydim:j}) + da.isel({xdim:i+1, ydim:j}))
+           interp_data = da.isel({xdim:slice(i,i+2), ydim:j}).mean(dim=[xdim], skipna=True)
         elif pttype == 'V':
-           interp_data = 0.5 * (da.isel({xdim:i, ydim:j}) + da.isel({xdim:i, ydim:j+1}))
+           #interp_data = 0.5 * (da.isel({xdim:i, ydim:j}) + da.isel({xdim:i, ydim:j+1}))
+           interp_data = da.isel({ydim:slice(j,j+2), xdim:i}).mean(dim=[ydim], skipna=True)
         else:
            raise ValueError("point-type can only be U or V")
         if xdim in interp_data.coords:
