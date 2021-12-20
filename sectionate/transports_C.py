@@ -1,5 +1,6 @@
 import numpy as np
 import xarray as xr
+from scipy.spatial import KDTree
 
 
 avail_models = ["MOM6"]
@@ -223,6 +224,8 @@ def MOM6_normal_transport(
     outname="uvnormal",
     section="sect",
     old_algo=False,
+    offset_center_x=0,
+    offset_center_y=0,
 ):
 
     if layer.replace("_", " ").split()[0] != interface.replace("_", " ").split()[0]:
@@ -238,20 +241,18 @@ def MOM6_normal_transport(
             if pt[0] == "U":
 
                 fact = -1 if pt[3] == "up" else 1
-
                 tmp = (
                     ds[utr]
-                    .isel(xq=pt[1], yh=pt[2])
+                    .isel(xq=pt[1], yh=pt[2] + offset_center_y)
                     .rename({"yh": "ysec", "xq": "xsec"})
                     .expand_dims(dim="sect", axis=-1)
                 ) * fact
-
                 norm.append(fact)
 
             if pt[0] == "V":
                 tmp = (
                     ds[vtr]
-                    .isel(xh=pt[1], yq=pt[2])
+                    .isel(xh=pt[1] + offset_center_x, yq=pt[2])
                     .rename({"yq": "ysec", "xh": "xsec"})
                     .expand_dims(dim=section, axis=-1)
                 )
@@ -272,10 +273,10 @@ def MOM6_normal_transport(
         section = MOM6_UVmask_from_section(uvpoints)
 
         normal_transport = (
-            ds["umo"].isel(yh=section["jpts"], xq=section["ipts"])
+            ds["umo"].isel(yh=section["jpts"] + offset_center_y, xq=section["ipts"])
             * section["usign"]
             * section["umask"]
-            + ds["vmo"].isel(yq=section["jpts"], xh=section["ipts"]) * section["vmask"]
+            + ds["vmo"].isel(yq=section["jpts"], xh=section["ipts"] + offset_center_x) * section["vmask"]
         )
 
         dsout = xr.Dataset()
@@ -285,3 +286,73 @@ def MOM6_normal_transport(
         dsout["norm"] = section["usign"].where(section["umask"] == 1)
 
     return dsout
+
+def find_offset_center_corner(lon_center, lat_center, lon_corner, lat_corner, debug=False):
+    """ find the cell center ih,jh indexes that fall between (iq-1, jq-1) and (iq, jq) corners
+    this is critical for when the grid is symetric or a subset
+    """
+
+    # transform into numpy arrays
+    lon_center = lon_center.values if not isinstance(lon_center, np.ndarray) else lon_center
+    lat_center = lat_center.values if not isinstance(lat_center, np.ndarray) else lat_center
+    lon_corner = lon_corner.values if not isinstance(lon_corner, np.ndarray) else lon_corner
+    lat_corner = lat_corner.values if not isinstance(lat_corner, np.ndarray) else lat_corner
+
+    # define the bounds where the cell centers have to fall between
+    # pick some distance from the edge so we have some leeway
+    ny, nx = lon_corner.shape
+    bottom = np.ceil(ny/4).astype('int')
+    left = np.ceil(nx/4).astype('int')
+    top = bottom+1
+    right = left+1
+
+    if debug:
+        print(f"irange={left},{right}")
+        print(f"jrange={bottom},{top}")
+
+    lon_corner_bottom_left = lon_corner[bottom, left]
+    lat_corner_bottom_left = lat_corner[bottom, left]
+    lon_corner_bottom_right = lon_corner[bottom, right]
+    lat_corner_bottom_right = lat_corner[bottom, right]
+    lon_corner_top_left = lon_corner[top, left]
+    lat_corner_top_left = lat_corner[top, left]
+    lon_corner_top_right = lon_corner[top, right]
+    lat_corner_top_right = lat_corner[top, right]
+
+    if debug:
+        print(f"bottom left corner is {lon_corner_bottom_left:.2f},{lat_corner_bottom_left:.2f}")
+        print(f"top right corner is {lon_corner_top_right:.2f},{lat_corner_top_right:.2f}")
+
+    # make a guess of what the lon/lat is the cell center values
+    lon_center_guess = 0.25 * (lon_corner_bottom_left + lon_corner_bottom_right +
+                               lon_corner_top_left + lon_corner_top_right)
+    lat_center_guess = 0.25 * (lat_corner_bottom_left + lat_corner_bottom_right +
+                               lat_corner_top_left + lat_corner_top_right)
+
+    if debug:
+        print(f"guess = {lon_center_guess},{lat_center_guess}")
+
+
+    # use a KD Tree to find the closest center point to our guess
+    tree = KDTree(list(zip(lon_center.ravel(), lat_center.ravel())))
+    distance, ji_index = tree.query([lon_center_guess, lat_center_guess], k=1)
+    jcenter, icenter = np.unravel_index(ji_index, lon_center.shape)
+
+    if debug:
+        print(f"found {icenter}, {jcenter}")
+
+    assert lon_center[jcenter, icenter] <= lon_corner_bottom_right
+    assert lon_center[jcenter, icenter] <= lon_corner_top_right
+    assert lon_center[jcenter, icenter] >= lon_corner_bottom_left
+    assert lon_center[jcenter, icenter] >= lon_corner_top_left
+
+    assert lat_center[jcenter, icenter] <= lat_corner_top_left
+    assert lat_center[jcenter, icenter] <= lat_corner_top_right
+    assert lat_center[jcenter, icenter] >= lat_corner_bottom_left
+    assert lat_center[jcenter, icenter] >= lat_corner_bottom_right
+
+    ioffset = icenter - right
+    joffset = jcenter - top
+
+    return ioffset, joffset
+

@@ -27,7 +27,8 @@ def get_all_points_from_section(isec, jsec):
     return pts
 
 
-def MOM6_extract_hydro(da, isec, jsec, xdim="xh", ydim="yh", section="sect"):
+def MOM6_extract_hydro(da, isec, jsec, xdim="xh", ydim="yh", section="sect",
+                       offset_center_x=0, offset_center_y=0):
     """extract data along the broken line of (isec, jsec) for plotting
 
     PARAMETERS:
@@ -45,6 +46,10 @@ def MOM6_extract_hydro(da, isec, jsec, xdim="xh", ydim="yh", section="sect"):
         name of the y-dimension of tracer array. Defaults to 'yh'.
     section: str
         name of the produced axis for along section data. Defaults to 'sect'.
+    offset_center_x: int
+        offset in x-direction between center and corner points
+    offset_center_y: int
+        offset in y-direction between center and corner points
 
     RETURNS:
     --------
@@ -59,9 +64,11 @@ def MOM6_extract_hydro(da, isec, jsec, xdim="xh", ydim="yh", section="sect"):
     def extract_1pt(da, uvpoint, xdim=xdim, ydim=ydim):
         pttype, i, j, _ = uvpoint
         if pttype == 'U':
+           j = j + offset_center_y
            #interp_data = 0.5 * (da.isel({xdim:i, ydim:j}) + da.isel({xdim:i+1, ydim:j}))
            interp_data = da.isel({xdim:slice(i,i+2), ydim:j}).mean(dim=[xdim], skipna=True)
         elif pttype == 'V':
+           i = i + offset_center_x
            #interp_data = 0.5 * (da.isel({xdim:i, ydim:j}) + da.isel({xdim:i, ydim:j+1}))
            interp_data = da.isel({ydim:slice(j,j+2), xdim:i}).mean(dim=[ydim], skipna=True)
         else:
