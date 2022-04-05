@@ -5,6 +5,34 @@ import xarray as xr
 avail_models = ["MOM6"]
 
 
+def MOM6_UVmask_from_section(uvpoints):
+    """decode section points into dataset"""
+
+    usign = []
+    ipts = []
+    jpts = []
+    umask = []
+    vmask = []
+
+    for pt in uvpoints:
+        pttype, i, j, ud = pt
+
+        ipts.append(i)
+        jpts.append(j)
+        usign.append(-1 if (ud == "up") else 1)
+        umask.append(1 if (pttype == "U") else 0)
+        vmask.append(1 if (pttype == "V") else 0)
+
+    section = xr.Dataset()
+    section["ipts"] = xr.DataArray(ipts, dims=("sect"))
+    section["jpts"] = xr.DataArray(jpts, dims=("sect"))
+    section["usign"] = xr.DataArray(usign, dims=("sect"))
+    section["umask"] = xr.DataArray(umask, dims=("sect"))
+    section["vmask"] = xr.DataArray(vmask, dims=("sect"))
+
+    return section
+
+
 def MOM6_UVpoints_from_section(isec, jsec):
     """from q points given by section, infer u-v points using MOM6 conventions:
     https://mom6.readthedocs.io/en/dev-gfdl/api/generated/pages/Horizontal_indexing.html
@@ -57,7 +85,7 @@ def MOM6_UVpoints_from_section(isec, jsec):
 
 
 def MOM6_UVpoints_tolonlat(uvpoints, dsgrid):
-    """ get longitude/latitude of UV points """
+    """get longitude/latitude of UV points"""
     lons = np.array([])
     lats = np.array([])
     for point in uvpoints:
@@ -194,46 +222,66 @@ def MOM6_normal_transport(
     interface="z_i",
     outname="uvnormal",
     section="sect",
+    old_algo=False,
 ):
 
     if layer.replace("_", " ").split()[0] != interface.replace("_", " ").split()[0]:
         raise ValueError("Inconsistent layer and interface depth variables")
 
     uvpoints = MOM6_UVpoints_from_section(isec, jsec)
-    norm = []
-    out = None
 
-    for pt in uvpoints:
-        if pt[0] == "U":
+    if old_algo:
+        norm = []
+        out = None
 
-            fact = -1 if pt[3] == "up" else 1
+        for pt in uvpoints:
+            if pt[0] == "U":
 
-            tmp = (
-                ds[utr]
-                .isel(xq=pt[1], yh=pt[2])
-                .rename({"yh": "ysec", "xq": "xsec"})
-                .expand_dims(dim="sect", axis=-1)
-            ) * fact
+                fact = -1 if pt[3] == "up" else 1
 
-            norm.append(fact)
+                tmp = (
+                    ds[utr]
+                    .isel(xq=pt[1], yh=pt[2])
+                    .rename({"yh": "ysec", "xq": "xsec"})
+                    .expand_dims(dim="sect", axis=-1)
+                ) * fact
 
-        if pt[0] == "V":
-            tmp = (
-                ds[vtr]
-                .isel(xh=pt[1], yq=pt[2])
-                .rename({"yq": "ysec", "xh": "xsec"})
-                .expand_dims(dim=section, axis=-1)
-            )
-            norm.append(np.nan)
-        if out is None:
-            out = tmp.copy()
-        else:
-            out = xr.concat([out, tmp], dim=section)
+                norm.append(fact)
 
-    dsout = xr.Dataset()
-    dsout[outname] = out
-    dsout[layer] = ds[layer]
-    dsout[interface] = ds[interface]
-    dsout["norm"] = xr.DataArray(norm, dims=(section))
+            if pt[0] == "V":
+                tmp = (
+                    ds[vtr]
+                    .isel(xh=pt[1], yq=pt[2])
+                    .rename({"yq": "ysec", "xh": "xsec"})
+                    .expand_dims(dim=section, axis=-1)
+                )
+                norm.append(np.nan)
+            if out is None:
+                out = tmp.copy()
+            else:
+                out = xr.concat([out, tmp], dim=section)
+
+        dsout = xr.Dataset()
+        dsout[outname] = out
+        dsout[layer] = ds[layer]
+        dsout[interface] = ds[interface]
+        dsout["norm"] = xr.DataArray(norm, dims=(section))
+
+    else:
+
+        section = MOM6_UVmask_from_section(uvpoints)
+
+        normal_transport = (
+            ds["umo"].isel(yh=section["jpts"], xq=section["ipts"])
+            * section["usign"]
+            * section["umask"]
+            + ds["vmo"].isel(yq=section["jpts"], xh=section["ipts"]) * section["vmask"]
+        )
+
+        dsout = xr.Dataset()
+        dsout[outname] = normal_transport
+        dsout[layer] = ds[layer]
+        dsout[interface] = ds[interface]
+        dsout["norm"] = section["usign"].where(section["umask"] == 1)
 
     return dsout
