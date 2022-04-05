@@ -6,7 +6,7 @@ avail_models = ["MOM6"]
 
 
 def MOM6_UVmask_from_section(uvpoints):
-    """ decode section points into dataset """
+    """decode section points into dataset"""
 
     usign = []
     ipts = []
@@ -85,7 +85,7 @@ def MOM6_UVpoints_from_section(isec, jsec):
 
 
 def MOM6_UVpoints_tolonlat(uvpoints, dsgrid):
-    """ get longitude/latitude of UV points """
+    """get longitude/latitude of UV points"""
     lons = np.array([])
     lats = np.array([])
     for point in uvpoints:
@@ -271,10 +271,12 @@ def MOM6_normal_transport(
 
         section = MOM6_UVmask_from_section(uvpoints)
 
-        normal_transport = (ds["umo"].isel(yh=section["jpts"], xq=section["ipts"]) *
-                            section["usign"] * section["umask"] +
-                            ds["vmo"].isel(yq=section["jpts"], xh=section["ipts"]) *
-                            section["vmask"])
+        normal_transport = (
+            ds["umo"].isel(yh=section["jpts"], xq=section["ipts"])
+            * section["usign"]
+            * section["umask"]
+            + ds["vmo"].isel(yq=section["jpts"], xh=section["ipts"]) * section["vmask"]
+        )
 
         dsout = xr.Dataset()
         dsout[outname] = normal_transport
