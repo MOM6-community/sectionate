@@ -90,7 +90,7 @@ def MOM6_UVpoints_tolonlat(uvpoints, dsgrid):
     lons = np.array([])
     lats = np.array([])
     for point in uvpoints:
-        pointtype, i, j = point
+        pointtype, i, j, _ = point
         if pointtype == "U":
             londim = "xq"
             latdim = "yh"
@@ -287,24 +287,35 @@ def MOM6_normal_transport(
 
     return dsout
 
-def find_offset_center_corner(lon_center, lat_center, lon_corner, lat_corner, debug=False):
-    """ find the cell center ih,jh indexes that fall between (iq-1, jq-1) and (iq, jq) corners
+
+def find_offset_center_corner(
+    lon_center, lat_center, lon_corner, lat_corner, debug=False
+):
+    """find the cell center ih,jh indexes that fall between (iq-1, jq-1) and (iq, jq) corners
     this is critical for when the grid is symetric or a subset
     """
 
     # transform into numpy arrays
-    lon_center = lon_center.values if not isinstance(lon_center, np.ndarray) else lon_center
-    lat_center = lat_center.values if not isinstance(lat_center, np.ndarray) else lat_center
-    lon_corner = lon_corner.values if not isinstance(lon_corner, np.ndarray) else lon_corner
-    lat_corner = lat_corner.values if not isinstance(lat_corner, np.ndarray) else lat_corner
+    lon_center = (
+        lon_center.values if not isinstance(lon_center, np.ndarray) else lon_center
+    )
+    lat_center = (
+        lat_center.values if not isinstance(lat_center, np.ndarray) else lat_center
+    )
+    lon_corner = (
+        lon_corner.values if not isinstance(lon_corner, np.ndarray) else lon_corner
+    )
+    lat_corner = (
+        lat_corner.values if not isinstance(lat_corner, np.ndarray) else lat_corner
+    )
 
     # define the bounds where the cell centers have to fall between
     # pick some distance from the edge so we have some leeway
     ny, nx = lon_corner.shape
-    bottom = np.ceil(ny/4).astype('int')
-    left = np.ceil(nx/4).astype('int')
-    top = bottom+1
-    right = left+1
+    bottom = np.ceil(ny / 4).astype("int")
+    left = np.ceil(nx / 4).astype("int")
+    top = bottom + 1
+    right = left + 1
 
     if debug:
         print(f"irange={left},{right}")
@@ -320,18 +331,29 @@ def find_offset_center_corner(lon_center, lat_center, lon_corner, lat_corner, de
     lat_corner_top_right = lat_corner[top, right]
 
     if debug:
-        print(f"bottom left corner is {lon_corner_bottom_left:.2f},{lat_corner_bottom_left:.2f}")
-        print(f"top right corner is {lon_corner_top_right:.2f},{lat_corner_top_right:.2f}")
+        print(
+            f"bottom left corner is {lon_corner_bottom_left:.2f},{lat_corner_bottom_left:.2f}"
+        )
+        print(
+            f"top right corner is {lon_corner_top_right:.2f},{lat_corner_top_right:.2f}"
+        )
 
     # make a guess of what the lon/lat is the cell center values
-    lon_center_guess = 0.25 * (lon_corner_bottom_left + lon_corner_bottom_right +
-                               lon_corner_top_left + lon_corner_top_right)
-    lat_center_guess = 0.25 * (lat_corner_bottom_left + lat_corner_bottom_right +
-                               lat_corner_top_left + lat_corner_top_right)
+    lon_center_guess = 0.25 * (
+        lon_corner_bottom_left
+        + lon_corner_bottom_right
+        + lon_corner_top_left
+        + lon_corner_top_right
+    )
+    lat_center_guess = 0.25 * (
+        lat_corner_bottom_left
+        + lat_corner_bottom_right
+        + lat_corner_top_left
+        + lat_corner_top_right
+    )
 
     if debug:
         print(f"guess = {lon_center_guess},{lat_center_guess}")
-
 
     # use a KD Tree to find the closest center point to our guess
     tree = KDTree(list(zip(lon_center.ravel(), lat_center.ravel())))
@@ -355,4 +377,3 @@ def find_offset_center_corner(lon_center, lat_center, lon_corner, lat_corner, de
     joffset = jcenter - top
 
     return ioffset, joffset
-
