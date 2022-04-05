@@ -282,7 +282,6 @@ def MOM6_normal_transport(
         dsout[outname] = normal_transport
         dsout[layer] = ds[layer]
         dsout[interface] = ds[interface]
-        norm = section["usign"].where(section["umask"] == 1)
-        dsout["norm"] = xr.DataArray(norm, dims=(section))
+        dsout["norm"] = section["usign"].where(section["umask"] == 1)
 
     return dsout
