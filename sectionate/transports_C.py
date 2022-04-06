@@ -276,7 +276,8 @@ def MOM6_normal_transport(
             ds["umo"].isel(yh=section["jpts"] + offset_center_y, xq=section["ipts"])
             * section["usign"]
             * section["umask"]
-            + ds["vmo"].isel(yq=section["jpts"], xh=section["ipts"] + offset_center_x) * section["vmask"]
+            + ds["vmo"].isel(yq=section["jpts"], xh=section["ipts"] + offset_center_x)
+            * section["vmask"]
         )
 
         dsout = xr.Dataset()
