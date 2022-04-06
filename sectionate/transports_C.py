@@ -273,10 +273,10 @@ def MOM6_normal_transport(
         section = MOM6_UVmask_from_section(uvpoints)
 
         normal_transport = (
-            ds["umo"].isel(yh=section["jpts"] + offset_center_y, xq=section["ipts"])
+            ds[utr].isel(yh=section["jpts"] + offset_center_y, xq=section["ipts"])
             * section["usign"]
             * section["umask"]
-            + ds["vmo"].isel(yq=section["jpts"], xh=section["ipts"] + offset_center_x)
+            + ds[vtr].isel(yq=section["jpts"], xh=section["ipts"] + offset_center_x)
             * section["vmask"]
         )
 
