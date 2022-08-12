@@ -97,4 +97,9 @@ def MOM6_extract_hydro(
         # concat over new dimension
         hydro = xr.concat([hydro, interp_data], dim=section)
 
+    # transpose
+    hydro = hydro.transpose(*(..., section))
+    # rechunk
+    hydro = hydro.chunk({section: len(hydro[section])})
+
     return hydro
