@@ -254,6 +254,83 @@ def MOM6_normal_transport(
 
     return dsout
 
+def MOM6_convergent_transport(
+        ds,
+        isec,
+        jsec,
+        utr="umo",
+        vtr="vmo",
+        layer="z_l",
+        interface="z_i",
+        outname="uvnormal",
+        section="sect",
+        old_algo=True,
+        offset_center_x=0,
+        offset_center_y=0,
+        counterclockwise=True,
+    ):
+
+    if layer.replace("_", " ").split()[0] != interface.replace("_", " ").split()[0]:
+        raise ValueError("Inconsistent layer and interface depth variables")
+
+    uvpoints = MOM6_UVpoints_from_section(isec, jsec)
+
+    if old_algo:
+        norm = []
+        out = None
+
+        for pt in uvpoints:
+            if pt["var"] == "U":
+
+                fact = -1 if pt["nward"] else 1
+                tmp = (
+                    ds[utr]
+                    .isel(xq=pt["i"], yh=pt["j"] + offset_center_y)
+                    .rename({"yh": "ysec", "xq": "xsec"})
+                    .expand_dims(dim="sect", axis=-1)
+                ) * fact
+                norm.append(fact)
+
+            if pt["var"] == "V":
+                fact = -1 if not(pt["eward"]) else 1
+                tmp = (
+                    ds[vtr]
+                    .isel(xh=pt["i"] + offset_center_x, yq=pt["j"])
+                    .rename({"yq": "ysec", "xh": "xsec"})
+                    .expand_dims(dim=section, axis=-1)
+                ) * fact
+                norm.append(np.nan)
+            if out is None:
+                out = tmp.copy()
+            else:
+                out = xr.concat([out, tmp], dim=section)
+
+        dsout = xr.Dataset()
+        dsout[outname] = out
+        dsout[layer] = ds[layer]
+        dsout[interface] = ds[interface]
+        dsout["norm"] = xr.DataArray(norm, dims=(section))
+
+    else:
+
+        section = MOM6_UVmask_from_section(uvpoints)
+
+        normal_transport = (
+            ds[utr].isel(yh=section["jpts"] + offset_center_y, xq=section["ipts"])
+            * section["usign"]
+            * section["umask"]
+            + ds[vtr].isel(yq=section["jpts"], xh=section["ipts"] + offset_center_x)
+            * section["vmask"]
+        )
+
+        dsout = xr.Dataset()
+        dsout[outname] = normal_transport
+        dsout[layer] = ds[layer]
+        dsout[interface] = ds[interface]
+        dsout["norm"] = section["usign"].where(section["umask"] == 1)
+
+    return dsout
+
 
 def find_offset_center_corner(
     lon_center, lat_center, lon_corner, lat_corner, debug=False
