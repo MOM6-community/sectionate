@@ -189,7 +189,7 @@ def MOM6_normal_transport(
         interface="z_i",
         outname="uvnormal",
         section="sect",
-        old_algo=False,
+        old_algo=True,
         offset_center_x=0,
         offset_center_y=0,
     ):
