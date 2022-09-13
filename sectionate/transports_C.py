@@ -214,19 +214,19 @@ def MOM6_compute_transport(ds, isec, jsec, utr="umo", vtr="vmo", vertdim="z_l"):
 
 
 def MOM6_normal_transport(
-    ds,
-    isec,
-    jsec,
-    utr="umo",
-    vtr="vmo",
-    layer="z_l",
-    interface="z_i",
-    outname="uvnormal",
-    section="sect",
-    old_algo=False,
-    offset_center_x=0,
-    offset_center_y=0,
-):
+        ds,
+        isec,
+        jsec,
+        utr="umo",
+        vtr="vmo",
+        layer="z_l",
+        interface="z_i",
+        outname="uvnormal",
+        section="sect",
+        old_algo=True,
+        offset_center_x=0,
+        offset_center_y=0,
+    ):
 
     if layer.replace("_", " ").split()[0] != interface.replace("_", " ").split()[0]:
         raise ValueError("Inconsistent layer and interface depth variables")
