@@ -16,13 +16,11 @@ def MOM6_UVmask_from_section(uvpoints):
     vmask = []
 
     for pt in uvpoints:
-        pttype, i, j, ud = pt
-
-        ipts.append(i)
-        jpts.append(j)
-        usign.append(-1 if (ud == "up") else 1)
-        umask.append(1 if (pttype == "U") else 0)
-        vmask.append(1 if (pttype == "V") else 0)
+        ipts.append(pt["i"])
+        jpts.append(pt["j"])
+        usign.append(-1 if (pt["nward"] == "up") else 1)
+        umask.append(1 if (pt["var"] == "U") else 0)
+        vmask.append(1 if (pt["var"] == "V") else 0)
 
     section = xr.Dataset()
     section["ipts"] = xr.DataArray(ipts, dims=("sect"))
@@ -36,51 +34,20 @@ def MOM6_UVmask_from_section(uvpoints):
 
 def MOM6_UVpoints_from_section(isec, jsec):
     """from q points given by section, infer u-v points using MOM6 conventions:
-    https://mom6.readthedocs.io/en/dev-gfdl/api/generated/pages/Horizontal_indexing.html
+    https://mom6.readthedocs.io/en/main/api/generated/pages/Horizontal_Indexing.html
     """
     nsec = len(isec)
     uvpoints = []
     for k in range(1, nsec):
-        if isec[k] == isec[k - 1]:
-            # U-point
-            if jsec[k] > jsec[k - 1]:
-                point = (
-                    "U",
-                    isec[k],
-                    jsec[k],
-                    "up",
-                )
-            elif jsec[k] < jsec[k - 1]:
-                point = (
-                    "U",
-                    isec[k - 1],
-                    jsec[k - 1],
-                    "down",
-                )
-            else:
-                raise ValueError(
-                    f"cannot find U-V point between 2 identical Q-points at i,j = {isec[k]}, {jsec[k]}"
-                )
-        elif jsec[k] == jsec[k - 1]:
-            # V-point
-            if isec[k] > isec[k - 1]:
-                point = (
-                    "V",
-                    isec[k],
-                    jsec[k],
-                    "up",
-                )
-            elif isec[k] < isec[k - 1]:
-                point = (
-                    "V",
-                    isec[k - 1],
-                    jsec[k - 1],
-                    "down",
-                )
-            else:
-                raise ValueError(
-                    f"cannot find U-V point between 2 identical Q-points at i,j = {isec[k]}, {jsec[k]}"
-                )
+        nward = jsec[k] > jsec[k - 1]
+        eward = isec[k] > isec[k - 1]
+        point = {
+            'var': 'U' if (jsec[k] != jsec[k - 1]) else 'V', 
+            'i': isec[k - np.int64(not(eward))],
+            'j': jsec[k - np.int64(not(nward))],
+            'nward': nward,
+            'eward': eward,
+        }
         uvpoints.append(point)
     return uvpoints
 
@@ -90,15 +57,14 @@ def MOM6_UVpoints_tolonlat(uvpoints, dsgrid):
     lons = np.array([])
     lats = np.array([])
     for point in uvpoints:
-        pointtype, i, j, _ = point
-        if pointtype == "U":
+        if point["var"] == "U":
             londim = "xq"
             latdim = "yh"
-        elif pointtype == "V":
+        elif point["var"] == "V":
             londim = "xh"
             latdim = "yq"
-        lon = dsgrid[londim].isel({londim: int(i)}).values
-        lat = dsgrid[latdim].isel({latdim: int(j)}).values
+        lon = dsgrid[londim].isel({londim: int(point["i"])}).values
+        lat = dsgrid[latdim].isel({latdim: int(point["j"])}).values
         lons = np.append(lons, lon)
         lats = np.append(lats, lat)
     return lons, lats
@@ -133,9 +99,9 @@ def get_U_points_from_section(isec, jsec, model="MOM6"):
     ipts_u = []
     jpts_u = []
     for pt in uvpoints:
-        if pt[0] == "U":
-            ipts_u.append(pt[1])
-            jpts_u.append(pt[2])
+        if pt["var"] == "U":
+            ipts_u.append(pt["i"])
+            jpts_u.append(pt["j"])
 
     # write results in dataset so we can later use to index data
     upts = xr.Dataset()
@@ -174,9 +140,9 @@ def get_V_points_from_section(isec, jsec, model="MOM6"):
     ipts_v = []
     jpts_v = []
     for pt in uvpoints:
-        if pt[0] == "V":
-            ipts_v.append(pt[1])
-            jpts_v.append(pt[2])
+        if pt["var"] == "V":
+            ipts_v.append(pt["i"])
+            jpts_v.append(pt["j"])
 
     # write results in dataset so we can later use to index data
     vpts = xr.Dataset()
@@ -214,19 +180,19 @@ def MOM6_compute_transport(ds, isec, jsec, utr="umo", vtr="vmo", vertdim="z_l"):
 
 
 def MOM6_normal_transport(
-    ds,
-    isec,
-    jsec,
-    utr="umo",
-    vtr="vmo",
-    layer="z_l",
-    interface="z_i",
-    outname="uvnormal",
-    section="sect",
-    old_algo=False,
-    offset_center_x=0,
-    offset_center_y=0,
-):
+        ds,
+        isec,
+        jsec,
+        utr="umo",
+        vtr="vmo",
+        layer="z_l",
+        interface="z_i",
+        outname="uvnormal",
+        section="sect",
+        old_algo=False,
+        offset_center_x=0,
+        offset_center_y=0,
+    ):
 
     if layer.replace("_", " ").split()[0] != interface.replace("_", " ").split()[0]:
         raise ValueError("Inconsistent layer and interface depth variables")
@@ -238,21 +204,21 @@ def MOM6_normal_transport(
         out = None
 
         for pt in uvpoints:
-            if pt[0] == "U":
+            if pt["var"] == "U":
 
-                fact = -1 if pt[3] == "up" else 1
+                fact = -1 if pt["nward"] else 1
                 tmp = (
                     ds[utr]
-                    .isel(xq=pt[1], yh=pt[2] + offset_center_y)
+                    .isel(xq=pt["i"], yh=pt["j"] + offset_center_y)
                     .rename({"yh": "ysec", "xq": "xsec"})
                     .expand_dims(dim="sect", axis=-1)
                 ) * fact
                 norm.append(fact)
 
-            if pt[0] == "V":
+            if pt["var"] == "V":
                 tmp = (
                     ds[vtr]
-                    .isel(xh=pt[1] + offset_center_x, yq=pt[2])
+                    .isel(xh=pt["i"] + offset_center_x, yq=pt["j"])
                     .rename({"yq": "ysec", "xh": "xsec"})
                     .expand_dims(dim=section, axis=-1)
                 )
