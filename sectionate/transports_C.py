@@ -392,7 +392,7 @@ def sectionate_gridwidth(
     offset_center_y=0,
 ):
 
-    uvpoints = sectionate.MOM6_UVpoints_from_section(isec, jsec)
+    uvpoints = MOM6_UVpoints_from_section(isec, jsec)
     out=None
     
     for pt in uvpoints:
@@ -406,16 +406,14 @@ def sectionate_gridwidth(
         else:
             out = xr.concat([out, tmp], dim=section)
     
-    grid_height = ds['z_i'].diff('z_i')
+    grid_height = ds['z_i'].diff('z_i').rename({'z_i' : 'z_l'})
+    grid_height[layer] = ds[layer]
     section_gridwidth = out.rename('section_gridwidth')
-    cell_area = section_gridwidth * grid_height
-    cell_area = cell_area.rename('cell_area')    
+    section_cellarea = section_gridwidth * grid_height
+    section_cellarea = section_cellarea.T.rename('cell_area')    
     
     dsout = xr.Dataset()
     dsout['section_gridwidth'] = section_gridwidth
-    dsout['cell_area'] = cell_area
-    # dsout = dsout.drop_vars(interface)
-    # dsout = dsout.assign_coords({layer : ds[layer]})
-    
+    dsout['section_cellarea'] = section_cellarea  
     
     return dsout
