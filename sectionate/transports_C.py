@@ -39,17 +39,18 @@ def MOM6_UVpoints_from_section(isec, jsec, symmetric=True):
     nsec = len(isec)
     uvpoints = []
     for k in range(1, nsec):
+        zonal = not(jsec[k] != jsec[k - 1])
         nward = jsec[k] > jsec[k - 1]
         eward = isec[k] > isec[k - 1]
         point = {
-            'var': 'U' if (jsec[k] != jsec[k - 1]) else 'V', 
-            'i': isec[k - np.int64(eward)],
-            'j': jsec[k - np.int64(nward)],
+            'var': 'V' if zonal else 'U', 
+            'i': isec[k - np.int64(not(eward))],
+            'j': jsec[k - np.int64(not(nward))],
             'nward': nward,
             'eward': eward,
         }
-        point['i'] += np.int64(not(symmetric)*(point['var']=="V"))
-        point['j'] += np.int64(not(symmetric)*(point['var']=="U"))
+        point['i'] -= np.int64(not(symmetric) and (point['var']=="V"))
+        point['j'] -= np.int64(not(symmetric) and (point['var']=="U"))
         uvpoints.append(point)
     return uvpoints
 
@@ -172,10 +173,10 @@ def MOM6_compute_transport(ds, isec, jsec, utr="umo", vtr="vmo", vertdim="z_l"):
     upts = get_U_points_from_section(isec, jsec, model="MOM6")
     vpts = get_V_points_from_section(isec, jsec, model="MOM6")
 
-    Trp = ds[utr].isel(yh=upts["j_u"], xq=upts["i_u"]).sum(dim=(vertdim, "sect")) + ds[
-        vtr
-    ].isel(yq=vpts["j_v"], xh=vpts["i_v"]).sum(dim=(vertdim, "sect"))
-
+    Trp = (
+        ds[utr].isel(yh=upts["j_u"], xq=upts["i_u"]).sum(dim=(vertdim, "sect")) +
+        ds[vtr].isel(yq=vpts["j_v"], xh=vpts["i_v"]).sum(dim=(vertdim, "sect"))
+    )
     Trp.attrs.update(ds[utr].attrs)
 
     return Trp
