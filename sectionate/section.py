@@ -3,7 +3,7 @@ import matplotlib.pyplot as plt
 import xarray as xr
 
 
-def create_section_composite(gridlon, gridlat, segment_lons, segment_lats):
+def create_section_composite(gridlon, gridlat, segment_lons, segment_lats, closed=False):
     """create section from list of segments
 
     PARAMETERS:
@@ -51,6 +51,12 @@ def create_section_composite(gridlon, gridlat, segment_lons, segment_lats):
         jsect = np.concatenate([jsect, jseg[:-1]], axis=0)
         xsect = np.concatenate([xsect, xseg[:-1]], axis=0)
         ysect = np.concatenate([ysect, yseg[:-1]], axis=0)
+        
+    if closed:
+        isect = np.append(isect, isect[0])
+        jsect = np.append(jsect, jsect[0])
+        xsect = np.append(xsect, xsect[0])
+        ysect = np.append(ysect, ysect[0])
 
     return isect, jsect, xsect, ysect
 
