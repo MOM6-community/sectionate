@@ -32,7 +32,7 @@ def MOM6_UVmask_from_section(uvpoints):
     return section
 
 
-def MOM6_UVpoints_from_section(isec, jsec):
+def MOM6_UVpoints_from_section(isec, jsec, symmetric=True):
     """from q points given by section, infer u-v points using MOM6 conventions:
     https://mom6.readthedocs.io/en/main/api/generated/pages/Horizontal_Indexing.html
     """
@@ -43,11 +43,13 @@ def MOM6_UVpoints_from_section(isec, jsec):
         eward = isec[k] > isec[k - 1]
         point = {
             'var': 'U' if (jsec[k] != jsec[k - 1]) else 'V', 
-            'i': isec[k - np.int64(not(eward))],
-            'j': jsec[k - np.int64(not(nward))],
+            'i': isec[k - np.int64(eward)],
+            'j': jsec[k - np.int64(nward)],
             'nward': nward,
             'eward': eward,
         }
+        point['i'] += np.int64(not(symmetric)*(point['var']=="V"))
+        point['j'] += np.int64(not(symmetric)*(point['var']=="U"))
         uvpoints.append(point)
     return uvpoints
 
@@ -192,12 +194,13 @@ def MOM6_normal_transport(
         old_algo=True,
         offset_center_x=0,
         offset_center_y=0,
+        symmetric=True
     ):
 
     if layer.replace("_", " ").split()[0] != interface.replace("_", " ").split()[0]:
         raise ValueError("Inconsistent layer and interface depth variables")
 
-    uvpoints = MOM6_UVpoints_from_section(isec, jsec)
+    uvpoints = MOM6_UVpoints_from_section(isec, jsec, symmetric=symmetric)
 
     if old_algo:
         norm = []
@@ -209,7 +212,7 @@ def MOM6_normal_transport(
                 fact = -1 if pt["nward"] else 1
                 tmp = (
                     ds[utr]
-                    .isel(xq=pt["i"], yh=pt["j"] + offset_center_y)
+                    .isel(xq=pt["i"], yh=pt["j"] + offset_center_y).fillna(0.)
                     .rename({"yh": "ysec", "xq": "xsec"})
                     .expand_dims(dim="sect", axis=-1)
                 ) * fact
@@ -218,7 +221,7 @@ def MOM6_normal_transport(
             if pt["var"] == "V":
                 tmp = (
                     ds[vtr]
-                    .isel(xh=pt["i"] + offset_center_x, yq=pt["j"])
+                    .isel(xh=pt["i"] + offset_center_x, yq=pt["j"]).fillna(0.)
                     .rename({"yq": "ysec", "xh": "xsec"})
                     .expand_dims(dim=section, axis=-1)
                 )
@@ -268,12 +271,13 @@ def MOM6_convergent_transport(
         offset_center_x=0,
         offset_center_y=0,
         counterclockwise=True,
+        symmetric=True
     ):
 
     if layer.replace("_", " ").split()[0] != interface.replace("_", " ").split()[0]:
         raise ValueError("Inconsistent layer and interface depth variables")
 
-    uvpoints = MOM6_UVpoints_from_section(isec, jsec)
+    uvpoints = MOM6_UVpoints_from_section(isec, jsec, symmetric=symmetric)
 
     if old_algo:
         norm = []
@@ -281,13 +285,12 @@ def MOM6_convergent_transport(
 
         for pt in uvpoints:
             if pt["var"] == "U":
-
                 fact = -1 if pt["nward"] else 1
                 tmp = (
                     ds[utr]
-                    .isel(xq=pt["i"], yh=pt["j"] + offset_center_y)
+                    .isel(xq=pt["i"], yh=pt["j"] + offset_center_y).fillna(0.)
                     .rename({"yh": "ysec", "xq": "xsec"})
-                    .expand_dims(dim="sect", axis=-1)
+                    .expand_dims(dim=section, axis=-1)
                 ) * fact
                 norm.append(fact)
 
@@ -295,11 +298,11 @@ def MOM6_convergent_transport(
                 fact = -1 if not(pt["eward"]) else 1
                 tmp = (
                     ds[vtr]
-                    .isel(xh=pt["i"] + offset_center_x, yq=pt["j"])
+                    .isel(xh=pt["i"] + offset_center_x, yq=pt["j"]).fillna(0.)
                     .rename({"yq": "ysec", "xh": "xsec"})
                     .expand_dims(dim=section, axis=-1)
                 ) * fact
-                norm.append(np.nan)
+                norm.append(fact)
             if out is None:
                 out = tmp.copy()
             else:
