@@ -68,6 +68,10 @@ def MOM6_extract_hydro(
     # get U, V points from broken line
     uvpoints = MOM6_UVpoints_from_section(isec, jsec)
 
+    #
+    def sample_pt(uvpoints, p):
+        return {k:v[p] for (k,v) in uvpoints.items()}
+    
     # interp onto U or V point
     def extract_1pt(da, uvpoint, xdim=xdim, ydim=ydim):
         i, j = uvpoint["i"], uvpoint["j"]
@@ -91,9 +95,9 @@ def MOM6_extract_hydro(
             interp_data = interp_data.reset_coords(names=ydim, drop=True)
         return interp_data.expand_dims(section)
 
-    hydro = extract_1pt(da, uvpoints[0])
-    for pt in uvpoints[1:]:
-        interp_data = extract_1pt(da, pt)
+    hydro = extract_1pt(da, sample_pt(uvpoints, 0))
+    for p in range(1, len(uvpoints['var'])):
+        interp_data = extract_1pt(da, sample_pt(uvpoints, p))
         # concat over new dimension
         hydro = xr.concat([hydro, interp_data], dim=section)
 
