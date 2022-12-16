@@ -2,8 +2,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 import xarray as xr
 
-
-def create_section_composite(gridlon, gridlat, segment_lons, segment_lats):
+def create_section_composite(gridlon, gridlat, segment_lons, segment_lats, periodic=True):
     """create section from list of segments
 
     PARAMETERS:
@@ -31,11 +30,11 @@ def create_section_composite(gridlon, gridlat, segment_lons, segment_lats):
 
     isect = np.array([], dtype=np.int64)
     jsect = np.array([], dtype=np.int64)
-    xsect = np.array([])
-    ysect = np.array([])
+    xsect = np.array([], dtype=np.float64)
+    ysect = np.array([], dtype=np.float64)
 
     if len(segment_lons) != len(segment_lats):
-        raise ValueError("segment_lons and segment_lats should have the same lenght")
+        raise ValueError("segment_lons and segment_lats should have the same length")
 
     for k in range(len(segment_lons) - 1):
         iseg, jseg, xseg, yseg = create_section(
@@ -45,26 +44,27 @@ def create_section_composite(gridlon, gridlat, segment_lons, segment_lats):
             segment_lats[k],
             segment_lons[k + 1],
             segment_lats[k + 1],
+            periodic=periodic
         )
 
         isect = np.concatenate([isect, iseg[:-1]], axis=0)
         jsect = np.concatenate([jsect, jseg[:-1]], axis=0)
         xsect = np.concatenate([xsect, xseg[:-1]], axis=0)
         ysect = np.concatenate([ysect, yseg[:-1]], axis=0)
-
+        
     return isect, jsect, xsect, ysect
 
 
-def create_section(gridlon, gridlat, lonstart, latstart, lonend, latend):
+def create_section(gridlon, gridlat, lonstart, latstart, lonend, latend, periodic=True):
     """ replacement function for the old create_section """
 
     iseg, jseg, lonseg, latseg = infer_broken_line_from_geo(
-        lonstart, latstart, lonend, latend, gridlon, gridlat
+        lonstart, latstart, lonend, latend, gridlon, gridlat, periodic=periodic
     )
     return iseg, jseg, lonseg, latseg
 
 
-def infer_broken_line_from_geo(lonstart, latstart, lonend, latend, gridlon, gridlat):
+def infer_broken_line_from_geo(lonstart, latstart, lonend, latend, gridlon, gridlat, periodic=True):
     """find the broken line joining (lonstart, latstart) and (lonend, latend) pairs
 
     PARAMETERS:
@@ -96,13 +96,13 @@ def infer_broken_line_from_geo(lonstart, latstart, lonend, latend, gridlon, grid
     istart, jstart = find_closest_grid_point(lonstart, latstart, gridlon, gridlat)
     iend, jend = find_closest_grid_point(lonend, latend, gridlon, gridlat)
     iseg, jseg, lonseg, latseg = infer_broken_line(
-        istart, jstart, iend, jend, gridlon, gridlat
+        istart, jstart, iend, jend, gridlon, gridlat, periodic=periodic
     )
 
     return iseg, jseg, lonseg, latseg
 
 
-def infer_broken_line(i1, j1, i2, j2, gridlon, gridlat, nitmax=10000):
+def infer_broken_line(i1, j1, i2, j2, gridlon, gridlat, nitmax=10000, periodic=True):
     """find the broken line joining (i1, j1) and (i2, j2) pairs
 
     PARAMETERS:
@@ -133,6 +133,7 @@ def infer_broken_line(i1, j1, i2, j2, gridlon, gridlat, nitmax=10000):
     lonseg, latseg: list of float
         corresponding longitude and latitude for iseg, jseg
     """
+    ny, nx = gridlon.shape
 
     # init loop index to starting position
     i = i1
@@ -142,15 +143,21 @@ def infer_broken_line(i1, j1, i2, j2, gridlon, gridlat, nitmax=10000):
     jseg = [j]  # add first point to list of points
     ct = 0  # counter for max iteration safeguard
     ijflip = 1  # 1/0 flip to alternate i,j increment
+    
+    # check if shortest path crosses periodic boundary (if applicable)
+    wraplons = False
+    if periodic:
+        wraplons = np.abs(gridlon[j2, i2] - gridlon[j1, i1]) > 180.
+    wrapsign = int(not(wraplons))*2-1
 
     # find direction of iteration
-    idir = np.sign(i2 - i1)
+    idir = np.sign(i2 - i1)*wrapsign
     jdir = np.sign(j2 - j1)
 
     # compute predicted slope of the section
     # set limitslope flag if i1 == i2
     if idir != 0:
-        slope = (j2 - j1) / (i2 - i1)
+        slope = (j2 - j1) / (((i2 - i1)*idir)%nx)*wrapsign
         limitslope = False
     else:
         limitslope = True
@@ -170,11 +177,11 @@ def infer_broken_line(i1, j1, i2, j2, gridlon, gridlat, nitmax=10000):
         if limitslope:
             jpred = jnext
         else:
-            jpred = j1 + slope * (inext - i1)
+            jpred = j1 + slope * (((inext - i1)*idir)%nx)*wrapsign
 
-        # compute distances from predicted j to j and jnext
-        dj_up = (jnext - jpred) * (jnext - jpred)
-        dj_down = (j - jpred) * (j - jpred)
+        # compute squared distances from predicted j to j and jnext
+        dj_up = (jnext - jpred)**2
+        dj_down = (j - jpred)**2
 
         # decide next increment based on distances
         if dj_up == dj_down:
@@ -182,7 +189,7 @@ def infer_broken_line(i1, j1, i2, j2, gridlon, gridlat, nitmax=10000):
             # to alternate direction of increments to j
             # if jdir == 0 (j1 == j2), just increment in i
             if ijflip == 1 or jdir == 0:
-                i = inext
+                i = inext%nx
                 ijflip = 0
             else:
                 j = jnext
@@ -190,9 +197,9 @@ def infer_broken_line(i1, j1, i2, j2, gridlon, gridlat, nitmax=10000):
         elif dj_up < dj_down:
             # if predicted is closer to jnext, move to j = jnext
             j = jnext
-        else:  # dj_up > dj_down
+        else: # dj_up > dj_down
             # else move to i = inext
-            i = inext
+            i = inext%nx
 
         # add new point to list
         iseg.append(i)
@@ -202,8 +209,8 @@ def infer_broken_line(i1, j1, i2, j2, gridlon, gridlat, nitmax=10000):
     lonseg = []
     latseg = []
     for jj, ji in zip(jseg, iseg):
-        lonseg.append(gridlon[jj, ji])
-        latseg.append(gridlat[jj, ji])
+        lonseg.append(gridlon[jj, ji].values)
+        latseg.append(gridlat[jj, ji].values)
     return iseg, jseg, lonseg, latseg
 
 
