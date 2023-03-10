@@ -52,13 +52,19 @@ def create_section_composite(gridlon, gridlat, segment_lons, segment_lats, close
         xsect = np.concatenate([xsect, xseg[:-1]], axis=0)
         ysect = np.concatenate([ysect, yseg[:-1]], axis=0)
         
+    if not closed:
+        isect = np.concatenate([isect, [iseg[-1]]], axis=0)
+        jsect = np.concatenate([jsect, [jseg[-1]]], axis=0)
+        xsect = np.concatenate([xsect, [xseg[-1]]], axis=0)
+        ysect = np.concatenate([ysect, [yseg[-1]]], axis=0)
+        
     if closed:
         isect = np.append(isect, isect[0])
         jsect = np.append(jsect, jsect[0])
         xsect = np.append(xsect, xsect[0])
         ysect = np.append(ysect, ysect[0])
 
-    return isect, jsect, xsect, ysect
+    return isect.astype(np.int64), jsect.astype(np.int64), xsect, ysect
 
 
 def create_section(gridlon, gridlat, lonstart, latstart, lonend, latend, periodic=True):
@@ -108,7 +114,7 @@ def infer_broken_line_from_geo(lonstart, latstart, lonend, latend, gridlon, grid
     return iseg, jseg, lonseg, latseg
 
 
-def infer_broken_line(i1, j1, i2, j2, gridlon, gridlat, nitmax=10000, periodic=True):
+def infer_broken_line(i1, j1, i2, j2, gridlon, gridlat, periodic=True):
     """find the broken line joining (i1, j1) and (i2, j2) pairs
 
     PARAMETERS:
@@ -140,6 +146,11 @@ def infer_broken_line(i1, j1, i2, j2, gridlon, gridlat, nitmax=10000, periodic=T
         corresponding longitude and latitude for iseg, jseg
     """
     ny, nx = gridlon.shape
+    
+    if isinstance(gridlon, xr.core.dataarray.DataArray):
+        gridlon = gridlon.values
+    if isinstance(gridlat, xr.core.dataarray.DataArray):
+        gridlat = gridlat.values
 
     # init loop index to starting position
     i = i1
@@ -148,7 +159,6 @@ def infer_broken_line(i1, j1, i2, j2, gridlon, gridlat, nitmax=10000, periodic=T
     iseg = [i]  # add first point to list of points
     jseg = [j]  # add first point to list of points
     ct = 0  # counter for max iteration safeguard
-    ijflip = 1  # 1/0 flip to alternate i,j increment
     
     # check if shortest path crosses periodic boundary (if applicable)
     wraplons = False
@@ -160,18 +170,25 @@ def infer_broken_line(i1, j1, i2, j2, gridlon, gridlat, nitmax=10000, periodic=T
     idir = np.sign(i2 - i1)*wrapsign
     jdir = np.sign(j2 - j1)
 
-    # compute predicted slope of the section
-    # set limitslope flag if i1 == i2
+    # find length of segment, as straight line and broken line following grid
+    #print(idir, jdir, wrapsign, nx)
+    di = (((i2 - i1)*idir)%nx)*idir
+    dj = j2-j1
+    L = np.sqrt( di**2 + dj**2 )
+    Nsteps = np.abs(di) + np.abs(dj)
+    
+    # compute slope of the section
     if idir != 0:
-        slope = (j2 - j1) / (((i2 - i1)*idir)%nx)*wrapsign
-        limitslope = False
+        slope = dj / di
+        vertical = False
     else:
-        limitslope = True
-
+        vertical = True
+        
     # iterate until we reach end of section
-    while (i != i2) or (j != j2):
+    #print([i1, j1], "to", [i2, j2], [di, dj], end="\n")
+    while (i%nx != i2) or (j != j2):
         # safety precaution, exit after N iterations
-        if ct > nitmax:
+        if ct > Nsteps:
             raise RuntimeError("max iterations reached")
         ct += 1
 
@@ -179,44 +196,39 @@ def infer_broken_line(i1, j1, i2, j2, gridlon, gridlat, nitmax=10000, periodic=T
         inext = i + idir
         jnext = j + jdir
 
-        # get prediction for next j point
-        if limitslope:
-            jpred = jnext
+        # increment prediction along shortest path line
+        if vertical:
+            ipred, jpred = inext, jnext
         else:
-            jpred = j1 + slope * (((inext - i1)*idir)%nx)*wrapsign
+            ipred = i1 + di * ct/Nsteps
+            jpred = j1 + dj * ct/Nsteps
 
         # compute squared distances from predicted j to j and jnext
-        dj_up = (jnext - jpred)**2
-        dj_down = (j - jpred)**2
+        di_pred = ((inext - ipred)**2 + (j     - jpred)**2)
+        dj_pred = ((i     - ipred)**2 + (jnext - jpred)**2)
 
-        # decide next increment based on distances
-        if dj_up == dj_down:
-            # if equal distance, increment i then flip switch
-            # to alternate direction of increments to j
-            # if jdir == 0 (j1 == j2), just increment in i
-            if ijflip == 1 or jdir == 0:
-                i = inext%nx
-                ijflip = 0
+        #print([i,j], [inext, jnext], [ipred, jpred])
+        # increment direction that ends up closer to predicted point along shorted path
+        if dj_pred < di_pred:
+            j = jnext
+        elif dj_pred > di_pred:
+            i = inext
+        elif dj_pred == di_pred:
+            if idir == 1:
+                i = inext
             else:
                 j = jnext
-                ijflip = 1
-        elif dj_up < dj_down:
-            # if predicted is closer to jnext, move to j = jnext
-            j = jnext
-        else: # dj_up > dj_down
-            # else move to i = inext
-            i = inext%nx
 
         # add new point to list
-        iseg.append(i)
+        iseg.append(i%nx)
         jseg.append(j)
 
     # create lat/lon vectors from i,j pairs
     lonseg = []
     latseg = []
     for jj, ji in zip(jseg, iseg):
-        lonseg.append(gridlon[jj, ji].values)
-        latseg.append(gridlat[jj, ji].values)
+        lonseg.append(gridlon[jj, ji])
+        latseg.append(gridlat[jj, ji])
     return iseg, jseg, lonseg, latseg
 
 
