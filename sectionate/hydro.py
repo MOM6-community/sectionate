@@ -36,7 +36,7 @@ def MOM6_extract_hydro(
     section="sect",
     offset_center_x=0,
     offset_center_y=0,
-):
+    ):
     """extract data along the broken line of (isec, jsec) for plotting
 
     PARAMETERS:

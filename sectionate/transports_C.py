@@ -71,8 +71,9 @@ def MOM6_convergent_transport(
         symmetric=True
     ):
 
-    if layer.replace("_", " ").split()[0] != interface.replace("_", " ").split()[0]:
-        raise ValueError("Inconsistent layer and interface depth variables")
+    if interface is not None:
+        if layer.replace("_", " ").split()[0] != interface.replace("_", " ").split()[0]:
+            raise ValueError("Inconsistent layer and interface grid variables")
 
     uvpoints = MOM6_UVpoints_from_section(isec, jsec, symmetric=symmetric)
 
@@ -113,7 +114,8 @@ def MOM6_convergent_transport(
     dsout = xr.Dataset()
     dsout[outname] = out
     dsout[layer] = ds[layer]
-    dsout[interface] = ds[interface]
+    if interface is not None:
+        dsout[interface] = ds[interface]
     dsout["norm"] = xr.DataArray(norm, dims=(section))
 
     return dsout
