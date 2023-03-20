@@ -26,7 +26,7 @@ def MOM6_UVpoints_from_section(isec, jsec, symmetric=True):
             v.append(point[key])
     return uvpoints
 
-def MOM6_UVcoords_from_points_uv(gridlon_u, gridlat_u, gridlon_v, gridlat_v, uvpoints, symmetric=True):
+def MOM6_UVcoords_from_points_uv(gridlon_u, gridlat_u, gridlon_v, gridlat_v, uvpoints):
     lons, lats = np.zeros(len(uvpoints['var'])), np.zeros(len(uvpoints['var']))
     for p in range(len(uvpoints['var'])):
         var, i, j = uvpoints['var'][p], uvpoints['i'][p], uvpoints['j'][p]
@@ -70,8 +70,8 @@ def MOM6_convergent_transport(
         counterclockwise=True,
         symmetric=True
     ):
-
-    if interface is not None:
+    
+    if (layer is not None) and (interface is not None):
         if layer.replace("_", " ").split()[0] != interface.replace("_", " ").split()[0]:
             raise ValueError("Inconsistent layer and interface grid variables")
 
@@ -79,7 +79,7 @@ def MOM6_convergent_transport(
 
     norm = []
     out = None
-
+    
     if counterclockwise:
         orient_fact = 1.
     else:
@@ -111,11 +111,12 @@ def MOM6_convergent_transport(
         else:
             out = xr.concat([out, tmp], dim=section)
 
-    dsout = xr.Dataset()
+    dsout = xr.Dataset({section: np.arange(0, out[section].size)})
     dsout[outname] = out
-    dsout[layer] = ds[layer]
-    if interface is not None:
-        dsout[interface] = ds[interface]
+    if layer is not None:
+        dsout[layer] = ds[layer]
+        if interface is not None:
+            dsout[interface] = ds[interface]
     dsout["norm"] = xr.DataArray(norm, dims=(section))
 
     return dsout
