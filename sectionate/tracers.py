@@ -1,15 +1,16 @@
 import xarray as xr
-from sectionate.transports_C import MOM6_UVpoints_from_section
+from sectionate.transports import uvindices_from_qindices
 
-def MOM6_extract_hydro(
+def extract_tracer(
     da,
     isec,
     jsec,
+    symmetric,
     xdim="xh",
     ydim="yh",
     section="sect"
     ):
-    """extract data along the broken line of (isec, jsec) for plotting
+    """extract tracer data on cell thickness grid along the broken line of (isec, jsec) for plotting
 
     PARAMETERS:
     -----------
@@ -33,21 +34,21 @@ def MOM6_extract_hydro(
     xarray.DataArray with data sampled on U and V points of the section.
     """
 
-    # get U, V points from broken line
-    uvpoints = MOM6_UVpoints_from_section(isec, jsec)
+    # get indices of UV points from broken line
+    uvindices = uvindices_from_qindices(isec, jsec, symmetric)
 
     #
-    def sample_pt(uvpoints, p):
-        return {k:v[p] for (k,v) in uvpoints.items()}
+    def sample_pt(uvindices, i):
+        return {k:v[i] for (k,v) in uvindices.items()}
     
     # interp onto U or V point
-    def extract_1pt(da, uvpoint, xdim=xdim, ydim=ydim):
-        i, j = uvpoint["i"], uvpoint["j"]
-        if uvpoint["var"] == "U":
+    def extract_1pt(da, uvindex, xdim=xdim, ydim=ydim):
+        i, j = uvindex["i"], uvindex["j"]
+        if uvindex["var"] == "U":
             interp_data = da.isel({xdim: slice(i, i + 2), ydim: j}).mean(
                 dim=[xdim], skipna=True
             )
-        elif uvpoint["var"] == "V":
+        elif uvindex["var"] == "V":
             interp_data = da.isel({ydim: slice(j, j + 2), xdim: i}).mean(
                 dim=[ydim], skipna=True
             )
@@ -59,15 +60,15 @@ def MOM6_extract_hydro(
             interp_data = interp_data.reset_coords(names=ydim, drop=True)
         return interp_data.expand_dims(section)
 
-    hydro = extract_1pt(da, sample_pt(uvpoints, 0))
-    for p in range(1, len(uvpoints['var'])):
-        interp_data = extract_1pt(da, sample_pt(uvpoints, p))
+    tracer = extract_1pt(da, sample_pt(uvindices, 0))
+    for i in range(1, len(uvindices['var'])):
+        interp_data = extract_1pt(da, sample_pt(uvindices, i))
         # concat over new dimension
-        hydro = xr.concat([hydro, interp_data], dim=section)
+        tracer = xr.concat([tracer, interp_data], dim=section)
 
     # transpose
-    hydro = hydro.transpose(*(..., section))
+    tracer = tracer.transpose(*(..., section))
     # rechunk
-    hydro = hydro.chunk({section: len(hydro[section])})
+    tracer = tracer.chunk({section: len(tracer[section])})
 
-    return hydro
+    return tracer

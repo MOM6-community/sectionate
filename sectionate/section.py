@@ -70,14 +70,14 @@ def create_section_composite(gridlon, gridlat, segment_lons, segment_lats, close
 def create_section(gridlon, gridlat, lonstart, latstart, lonend, latend, periodic=True):
     """ replacement function for the old create_section """
 
-    iseg, jseg, lonseg, latseg = infer_broken_line_from_geo(
+    iseg, jseg, lonseg, latseg = infer_grid_path_from_geo(
         lonstart, latstart, lonend, latend, gridlon, gridlat, periodic=periodic
     )
     return iseg, jseg, lonseg, latseg
 
 
-def infer_broken_line_from_geo(lonstart, latstart, lonend, latend, gridlon, gridlat, periodic=True):
-    """find the broken line joining (lonstart, latstart) and (lonend, latend) pairs
+def infer_grid_path_from_geo(lonstart, latstart, lonend, latend, gridlon, gridlat, periodic=True):
+    """find the grid path joining (lonstart, latstart) and (lonend, latend) pairs
 
     PARAMETERS:
     -----------
@@ -107,15 +107,15 @@ def infer_broken_line_from_geo(lonstart, latstart, lonend, latend, gridlon, grid
 
     istart, jstart = find_closest_grid_point(lonstart, latstart, gridlon, gridlat)
     iend, jend = find_closest_grid_point(lonend, latend, gridlon, gridlat)
-    iseg, jseg, lonseg, latseg = infer_broken_line(
+    iseg, jseg, lonseg, latseg = infer_grid_path(
         istart, jstart, iend, jend, gridlon, gridlat, periodic=periodic
     )
 
     return iseg, jseg, lonseg, latseg
 
 
-def infer_broken_line(i1, j1, i2, j2, gridlon, gridlat, periodic=True):
-    """find the broken line joining (i1, j1) and (i2, j2) pairs
+def infer_grid_path(i1, j1, i2, j2, gridlon, gridlat, periodic=True):
+    """find the grid path joining (i1, j1) and (i2, j2) pairs
 
     PARAMETERS:
     -----------
@@ -170,7 +170,7 @@ def infer_broken_line(i1, j1, i2, j2, gridlon, gridlat, periodic=True):
     idir = np.sign(i2 - i1)*wrapsign
     jdir = np.sign(j2 - j1)
 
-    # find length of segment, as both straight line (L) and broken line following grid (Nsteps)
+    # find length of segment, as both straight line (L) and gri path following grid (Nsteps)
     di = (((i2 - i1)*idir)%nx)*idir
     dj = j2-j1
     L = np.sqrt( di**2 + dj**2 )
