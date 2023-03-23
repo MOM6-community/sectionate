@@ -1,41 +1,13 @@
 import xarray as xr
 from sectionate.transports_C import MOM6_UVpoints_from_section
 
-
-def get_all_points_from_section(isec, jsec):
-    """turn (i,j) points into xarray.dataarrays
-
-    PARAMETERS:
-    -----------
-
-    isec: int
-        indices of i-points of broken line
-    jsec: int
-        indices of j-points of broken line
-
-    RETURNS:
-    --------
-
-    xarray.Dataset with data arrays for i and j points for all section points
-    """
-
-    # write results in dataset so we can later use to index data
-    pts = xr.Dataset()
-    pts["i"] = xr.DataArray(isec, dims=("sect"))
-    pts["j"] = xr.DataArray(jsec, dims=("sect"))
-
-    return pts
-
-
 def MOM6_extract_hydro(
     da,
     isec,
     jsec,
     xdim="xh",
     ydim="yh",
-    section="sect",
-    offset_center_x=0,
-    offset_center_y=0,
+    section="sect"
     ):
     """extract data along the broken line of (isec, jsec) for plotting
 
@@ -54,10 +26,6 @@ def MOM6_extract_hydro(
         name of the y-dimension of tracer array. Defaults to 'yh'.
     section: str
         name of the produced axis for along section data. Defaults to 'sect'.
-    offset_center_x: int
-        offset in x-direction between center and corner points
-    offset_center_y: int
-        offset in y-direction between center and corner points
 
     RETURNS:
     --------
@@ -76,14 +44,10 @@ def MOM6_extract_hydro(
     def extract_1pt(da, uvpoint, xdim=xdim, ydim=ydim):
         i, j = uvpoint["i"], uvpoint["j"]
         if uvpoint["var"] == "U":
-            j = j + offset_center_y
-            # interp_data = 0.5 * (da.isel({xdim:i, ydim:j}) + da.isel({xdim:i+1, ydim:j}))
             interp_data = da.isel({xdim: slice(i, i + 2), ydim: j}).mean(
                 dim=[xdim], skipna=True
             )
         elif uvpoint["var"] == "V":
-            i = i + offset_center_x
-            # interp_data = 0.5 * (da.isel({xdim:i, ydim:j}) + da.isel({xdim:i, ydim:j+1}))
             interp_data = da.isel({ydim: slice(j, j + 2), xdim: i}).mean(
                 dim=[ydim], skipna=True
             )

@@ -1,8 +1,6 @@
 import numpy as np
 import xarray as xr
 
-avail_models = ["MOM6"]
-
 def MOM6_UVpoints_from_section(isec, jsec, symmetric=True):
     """from q points given by section, infer u-v points using MOM6 conventions:
     https://mom6.readthedocs.io/en/main/api/generated/pages/Horizontal_Indexing.html
