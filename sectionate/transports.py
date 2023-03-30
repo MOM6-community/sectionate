@@ -76,12 +76,13 @@ def convergent_transport(
         outname="conv_mass_transport",
         section="sect",
         counterclockwise=True,
-        dim_names={'xh':'xh', 'yh':'yh', 'xq':'xq', 'yq':'yq'}
+        dim_names={'xh':'xh', 'yh':'yh', 'xq':'xq', 'yq':'yq'},
+        cell_widths={'U':'dyCu', 'V':'dxCv'}
     ):
     
     if (layer is not None) and (interface is not None):
-        if layer.replace("_", " ").split()[0] != interface.replace("_", " ").split()[0]:
-            raise ValueError("Inconsistent layer and interface grid variables")
+        if layer.replace("l", "i") != interface:
+            raise ValueError("Inconsistent layer and interface grid variables!")
 
     uvindices = uvindices_from_qindices(isec, jsec, symmetric)
 
@@ -93,6 +94,8 @@ def convergent_transport(
     else:
         orient_fact = -1.
     
+    dist = []
+    cum_dist = 0.
     for i in range(len(uvindices['var'])):
         pt = {k:v[i] for (k,v) in uvindices.items()}
         if pt["var"] == "U":
@@ -104,8 +107,13 @@ def convergent_transport(
                 .expand_dims(dim=section, axis=-1)
             ) * fact * orient_fact
             sign.append(fact)
+            if cell_widths['U'] in ds.coords:
+                tmp = tmp.rename({cell_widths['U']: 'dl'})
+                d = ds[cell_widths['U']].isel(xq=pt["i"], yh=pt["j"])
+                cum_dist += d
+                dist.append(cum_dist - d/2.)
 
-        if pt["var"] == "V":
+        elif pt["var"] == "V":
             fact = -1 if not(pt["eward"]) else 1
             tmp = (
                 ds[vtr]
@@ -114,6 +122,14 @@ def convergent_transport(
                 .expand_dims(dim=section, axis=-1)
             ) * fact * orient_fact
             sign.append(fact)
+            if cell_widths['V'] in ds.coords:
+                tmp = tmp.rename({cell_widths['V']: 'dl'})
+                d = ds[cell_widths['V']].isel(xh=pt["i"], yq=pt["j"])
+                
+            if (cell_widths['U'] in ds.coords) or (cell_widths['V'] in ds.coords):
+                cum_dist += d
+                dist.append(cum_dist - d/2.)
+        
         if out is None:
             out = tmp.copy()
         else:
@@ -126,5 +142,7 @@ def convergent_transport(
         if interface is not None:
             dsout[interface] = ds[interface]
     dsout["sign"] = xr.DataArray(sign, dims=(section))
+    if len(dist)>0:
+        dsout=dsout.assign_coords({"distance": xr.DataArray(dist, dims=(section), attrs={'units':'m'})})
 
     return dsout
