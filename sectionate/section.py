@@ -80,7 +80,6 @@ def create_section(gridlon, gridlat, lonstart, latstart, lonend, latend, symmetr
     )
     return iseg+np.int64(not(symmetric)), jseg+np.int64(not(symmetric)), lonseg, latseg
 
-
 def infer_grid_path_from_geo(lonstart, latstart, lonend, latend, gridlon, gridlat, periodic=True):
     """find the grid path joining (lonstart, latstart) and (lonend, latend) pairs
 

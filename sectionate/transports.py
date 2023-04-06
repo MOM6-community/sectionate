@@ -11,6 +11,9 @@ def uvindices_from_qindices(isec, jsec, symmetric):
         zonal = not(jsec[k] != jsec[k - 1])
         nward = jsec[k] > jsec[k - 1]
         eward = isec[k] > isec[k - 1]
+        # Handle corner cases for wrapping boundaries
+        if (isec[k] - isec[k - 1])>1: eward = False
+        elif (isec[k] - isec[k - 1])<-1: eward = True
         uvindex = {
             'var': 'V' if zonal else 'U', 
             'i': isec[k - np.int64(not(eward))],
