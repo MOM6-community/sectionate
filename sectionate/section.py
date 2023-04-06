@@ -2,7 +2,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 import xarray as xr
 
-def create_section_composite(gridlon, gridlat, segment_lons, segment_lats, closed=False, periodic=True):
+def create_section_composite(gridlon, gridlat, segment_lons, segment_lats, symmetric, closed=False, periodic=True):
     """create section from list of segments
 
     PARAMETERS:
@@ -35,7 +35,7 @@ def create_section_composite(gridlon, gridlat, segment_lons, segment_lats, close
 
     if len(segment_lons) != len(segment_lats):
         raise ValueError("segment_lons and segment_lats should have the same length")
-
+        
     for k in range(len(segment_lons) - 1):
         iseg, jseg, xseg, yseg = create_section(
             gridlon,
@@ -44,6 +44,7 @@ def create_section_composite(gridlon, gridlat, segment_lons, segment_lats, close
             segment_lats[k],
             segment_lons[k + 1],
             segment_lats[k + 1],
+            symmetric,
             periodic=periodic
         )
 
@@ -67,13 +68,17 @@ def create_section_composite(gridlon, gridlat, segment_lons, segment_lats, close
     return isect.astype(np.int64), jsect.astype(np.int64), xsect, ysect
 
 
-def create_section(gridlon, gridlat, lonstart, latstart, lonend, latend, periodic=True):
+def create_section(gridlon, gridlat, lonstart, latstart, lonend, latend, symmetric, periodic=True):
     """ replacement function for the old create_section """
 
+    if not(symmetric):
+        gridlon=gridlon[1:,1:]
+        gridlat=gridlat[1:,1:]
+        
     iseg, jseg, lonseg, latseg = infer_grid_path_from_geo(
         lonstart, latstart, lonend, latend, gridlon, gridlat, periodic=periodic
     )
-    return iseg, jseg, lonseg, latseg
+    return iseg+np.int64(not(symmetric)), jseg+np.int64(not(symmetric)), lonseg, latseg
 
 
 def infer_grid_path_from_geo(lonstart, latstart, lonend, latend, gridlon, gridlat, periodic=True):
@@ -226,7 +231,7 @@ def infer_grid_path(i1, j1, i2, j2, gridlon, gridlat, periodic=True):
     for jj, ji in zip(jseg, iseg):
         lonseg.append(gridlon[jj, ji])
         latseg.append(gridlat[jj, ji])
-    return iseg, jseg, lonseg, latseg
+    return np.array(iseg), np.array(jseg), np.array(lonseg), np.array(latseg)
 
 
 def find_closest_grid_point(lon, lat, gridlon, gridlat):
