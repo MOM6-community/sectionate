@@ -108,8 +108,8 @@ def convergent_transport(
     section["Umask"] = xr.DataArray(uvindices["var"]=="U", dims=section_coord)
     section["Vmask"] = xr.DataArray(uvindices["var"]=="V", dims=section_coord)
     
-    usel = {dim_names["yh"]: section["j"], dim_names["xq"]:section["i"]}
-    vsel = {dim_names["yq"]: section["j"], dim_names["xh"]:section["i"]}
+    usel = {dim_names["yh"]: np.mod(section["j"], ds[dim_names["yh"]].size), dim_names["xq"]: section["i"]}
+    vsel = {dim_names["xh"]: np.mod(section["i"], ds[dim_names["xh"]].size), dim_names["yq"]: section["j"]}
     
     dsout = xr.Dataset({outname: (
          (ds[utr].isel(usel).fillna(0.) * section["Usign"] * section["Umask"])
