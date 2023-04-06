@@ -6,25 +6,31 @@ def uvindices_from_qindices(isec, jsec, symmetric):
     https://mom6.readthedocs.io/en/main/api/generated/pages/Horizontal_Indexing.html
     """
     nsec = len(isec)
-    uvindices = {'var':[], 'i':[], 'j':[], 'nward':[], 'eward':[]}
-    for k in range(1, nsec):
-        zonal = not(jsec[k] != jsec[k - 1])
-        nward = jsec[k] > jsec[k - 1]
-        eward = isec[k] > isec[k - 1]
+    uvindices = {
+        'var':np.zeros(nsec-1, dtype='<U2'),
+        'i':np.zeros(nsec-1, dtype=np.int64),
+        'j':np.zeros(nsec-1, dtype=np.int64),
+        'nward':np.zeros(nsec-1, dtype=bool),
+        'eward':np.zeros(nsec-1, dtype=bool)
+    }
+    for k in range(0, nsec-1):
+        zonal = not(jsec[k+1] != jsec[k])
+        nward = jsec[k+1] > jsec[k]
+        eward = isec[k+1] > isec[k]
         # Handle corner cases for wrapping boundaries
-        if (isec[k] - isec[k - 1])>1: eward = False
-        elif (isec[k] - isec[k - 1])<-1: eward = True
+        if (isec[k+1] - isec[k])>1: eward = False
+        elif (isec[k+1] - isec[k])<-1: eward = True
         uvindex = {
             'var': 'V' if zonal else 'U', 
-            'i': isec[k - np.int64(not(eward))],
-            'j': jsec[k - np.int64(not(nward))],
+            'i': isec[k+1-np.int64(not(eward))],
+            'j': jsec[k+1-np.int64(not(nward))],
             'nward': nward,
             'eward': eward,
         }
         uvindex['i'] -= np.int64(not(symmetric) and (uvindex['var']=="V"))
         uvindex['j'] -= np.int64(not(symmetric) and (uvindex['var']=="U"))
         for (key, v) in uvindices.items():
-            v.append(uvindex[key])
+            v[k] = uvindex[key]
     return uvindices
 
 def uvcoords_from_uvindices(grid, uvindices, coord_prefix="geo", dim_names={'xh':'xh', 'yh':'yh', 'xq':'xq', 'yq':'yq'}):
@@ -147,5 +153,55 @@ def convergent_transport(
     dsout["sign"] = xr.DataArray(sign, dims=(section))
     if len(dist)>0:
         dsout=dsout.assign_coords({"distance": xr.DataArray(dist, dims=(section), attrs={'units':'m'})})
+
+    return dsout
+
+def convergent_transport_new(
+        ds,
+        isec,
+        jsec,
+        symmetric,
+        utr="umo",
+        vtr="vmo",
+        layer="z_l",
+        interface="z_i",
+        outname="conv_mass_transport",
+        section_coord="sect",
+        counterclockwise=True,
+        dim_names={'xh':'xh', 'yh':'yh', 'xq':'xq', 'yq':'yq'},
+        cell_widths={'U':'dyCu', 'V':'dxCv'}
+    ):
+    
+    if (layer is not None) and (interface is not None):
+        if layer.replace("l", "i") != interface:
+            raise ValueError("Inconsistent layer and interface grid variables!")
+
+    uvindices = uvindices_from_qindices(isec, jsec, symmetric)
+    
+    if counterclockwise:
+        orient_fact = 1.
+    else:
+        orient_fact = -1.
+    
+    section = xr.Dataset()
+    section["i"] = xr.DataArray(uvindices["i"], dims=section_coord)
+    section["j"] = xr.DataArray(uvindices["j"], dims=section_coord)
+    section["Usign"] = xr.DataArray(np.float64(~uvindices['nward'])*2-1, dims=section_coord)
+    section["Vsign"] = xr.DataArray(np.float64(uvindices['eward'])*2-1, dims=section_coord)
+    section["Umask"] = xr.DataArray(uvindices["var"]=="U", dims=section_coord)
+    section["Vmask"] = xr.DataArray(uvindices["var"]=="V", dims=section_coord)
+    
+    dsout = xr.Dataset()
+    dsout[outname] = (
+         (ds[utr].isel(yh=section["j"], xq=section["i"]).fillna(0.)
+          *section["Usign"] * section["Umask"])
+        +(ds[vtr].isel(yq=section["j"], xh=section["i"]).fillna(0.)
+          *section["Vsign"] * section["Vmask"])
+    ) * orient_fact
+
+    if layer is not None:
+        dsout[layer] = ds[layer]
+        if interface is not None:
+            dsout[interface] = ds[interface]
 
     return dsout
