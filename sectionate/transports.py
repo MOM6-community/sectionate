@@ -83,89 +83,6 @@ def convergent_transport(
         layer="z_l",
         interface="z_i",
         outname="conv_mass_transport",
-        section="sect",
-        counterclockwise=True,
-        dim_names={'xh':'xh', 'yh':'yh', 'xq':'xq', 'yq':'yq'},
-        cell_widths={'U':'dyCu', 'V':'dxCv'}
-    ):
-    
-    if (layer is not None) and (interface is not None):
-        if layer.replace("l", "i") != interface:
-            raise ValueError("Inconsistent layer and interface grid variables!")
-
-    uvindices = uvindices_from_qindices(isec, jsec, symmetric)
-
-    sign = []
-    out = None
-    
-    if counterclockwise:
-        orient_fact = 1.
-    else:
-        orient_fact = -1.
-    
-    dist = []
-    cum_dist = 0.
-    for i in range(len(uvindices['var'])):
-        pt = {k:v[i] for (k,v) in uvindices.items()}
-        if pt["var"] == "U":
-            fact = -1 if pt["nward"] else 1
-            tmp = (
-                ds[utr]
-                .isel(xq=pt["i"], yh=pt["j"]).fillna(0.)
-                .rename({dim_names["yh"]: "ysec", dim_names["xq"]: "xsec"})
-                .expand_dims(dim=section, axis=-1)
-            ) * fact * orient_fact
-            sign.append(fact)
-            if cell_widths['U'] in ds.coords:
-                tmp = tmp.rename({cell_widths['U']: 'dl'})
-                d = ds[cell_widths['U']].isel(xq=pt["i"], yh=pt["j"])
-                cum_dist += d
-                dist.append(cum_dist - d/2.)
-
-        elif pt["var"] == "V":
-            fact = -1 if not(pt["eward"]) else 1
-            tmp = (
-                ds[vtr]
-                .isel(xh=pt["i"], yq=pt["j"]).fillna(0.)
-                .rename({dim_names["yq"]: "ysec", dim_names["xh"]: "xsec"})
-                .expand_dims(dim=section, axis=-1)
-            ) * fact * orient_fact
-            sign.append(fact)
-            if cell_widths['V'] in ds.coords:
-                tmp = tmp.rename({cell_widths['V']: 'dl'})
-                d = ds[cell_widths['V']].isel(xh=pt["i"], yq=pt["j"])
-                
-            if (cell_widths['U'] in ds.coords) or (cell_widths['V'] in ds.coords):
-                cum_dist += d
-                dist.append(cum_dist - d/2.)
-        
-        if out is None:
-            out = tmp.copy()
-        else:
-            out = xr.concat([out, tmp], dim=section)
-
-    dsout = xr.Dataset({section: np.arange(0, out[section].size)})
-    dsout[outname] = out
-    if layer is not None:
-        dsout[layer] = ds[layer]
-        if interface is not None:
-            dsout[interface] = ds[interface]
-    dsout["sign"] = xr.DataArray(sign, dims=(section))
-    if len(dist)>0:
-        dsout=dsout.assign_coords({"distance": xr.DataArray(dist, dims=(section), attrs={'units':'m'})})
-
-    return dsout
-
-def convergent_transport_new(
-        ds,
-        isec,
-        jsec,
-        symmetric,
-        utr="umo",
-        vtr="vmo",
-        layer="z_l",
-        interface="z_i",
-        outname="conv_mass_transport",
         section_coord="sect",
         counterclockwise=True,
         dim_names={'xh':'xh', 'yh':'yh', 'xq':'xq', 'yq':'yq'},
@@ -191,13 +108,19 @@ def convergent_transport_new(
     section["Umask"] = xr.DataArray(uvindices["var"]=="U", dims=section_coord)
     section["Vmask"] = xr.DataArray(uvindices["var"]=="V", dims=section_coord)
     
-    dsout = xr.Dataset()
-    dsout[outname] = (
-         (ds[utr].isel(yh=section["j"], xq=section["i"]).fillna(0.)
-          *section["Usign"] * section["Umask"])
-        +(ds[vtr].isel(yq=section["j"], xh=section["i"]).fillna(0.)
-          *section["Vsign"] * section["Vmask"])
-    ) * orient_fact
+    usel = {dim_names["yh"]: section["j"], dim_names["xq"]:section["i"]}
+    vsel = {dim_names["yq"]: section["j"], dim_names["xh"]:section["i"]}
+    
+    dsout = xr.Dataset({outname: (
+         (ds[utr].isel(usel).fillna(0.) * section["Usign"] * section["Umask"])
+        +(ds[vtr].isel(vsel).fillna(0.) * section["Vsign"] * section["Vmask"])
+    ) * orient_fact})
+    
+    if (cell_widths['U'] in ds.coords) and (cell_widths['V'] in ds.coords):
+        dsout = dsout.assign_coords({'dl': xr.DataArray((
+             (ds[cell_widths['U']].isel(usel).fillna(0.) * section["Umask"])
+            +(ds[cell_widths['V']].isel(vsel).fillna(0.) * section["Vmask"])
+        ), dims=(section_coord,), attrs={'units':'m'})})
 
     if layer is not None:
         dsout[layer] = ds[layer]
