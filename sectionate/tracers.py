@@ -58,5 +58,7 @@ def extract_tracer(
         +( 0.5*(da.isel(vsel) + da.isel(vsel_next)).fillna(0.) * section["Vmask"])
     )
     tracer = tracer.where(tracer!=0., np.nan)
+    tracer.name = da.name
+    tracer.attrs = da.attrs
 
     return tracer
