@@ -22,13 +22,13 @@ def uvindices_from_qindices(isec, jsec, symmetric):
         elif (isec[k+1] - isec[k])<-1: eward = True
         uvindex = {
             'var': 'V' if zonal else 'U', 
-            'i': isec[k+1-np.int64(not(eward))],
-            'j': jsec[k+1-np.int64(not(nward))],
+            'i': isec[k+np.int64(not(eward) and zonal)],
+            'j': jsec[k+np.int64(not(nward) and not(zonal))],
             'nward': nward,
             'eward': eward,
         }
-        uvindex['i'] -= np.int64(not(symmetric) and (uvindex['var']=="V"))
-        uvindex['j'] -= np.int64(not(symmetric) and (uvindex['var']=="U"))
+        uvindex['i'] += np.int64(not(symmetric) and (not(zonal)))
+        uvindex['j'] += np.int64(not(symmetric) and zonal)
         for (key, v) in uvindices.items():
             v[k] = uvindex[key]
     return uvindices

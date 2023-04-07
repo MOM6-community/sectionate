@@ -67,18 +67,17 @@ def create_section_composite(gridlon, gridlat, segment_lons, segment_lats, symme
 
     return isect.astype(np.int64), jsect.astype(np.int64), xsect, ysect
 
-
 def create_section(gridlon, gridlat, lonstart, latstart, lonend, latend, symmetric, periodic=True):
     """ replacement function for the old create_section """
 
-    if not(symmetric):
+    if symmetric:
         gridlon=gridlon[1:,1:]
         gridlat=gridlat[1:,1:]
         
     iseg, jseg, lonseg, latseg = infer_grid_path_from_geo(
         lonstart, latstart, lonend, latend, gridlon, gridlat, periodic=periodic
     )
-    return iseg+np.int64(not(symmetric)), jseg+np.int64(not(symmetric)), lonseg, latseg
+    return iseg+np.int64(symmetric), jseg+np.int64(symmetric), lonseg, latseg
 
 def infer_grid_path_from_geo(lonstart, latstart, lonend, latend, gridlon, gridlat, periodic=True):
     """find the grid path joining (lonstart, latstart) and (lonend, latend) pairs
