@@ -1,3 +1,4 @@
+import numpy as np
 import xarray as xr
 from sectionate.transports import uvindices_from_qindices
 
@@ -6,8 +7,7 @@ def extract_tracer(
     isec,
     jsec,
     symmetric,
-    xdim="xh",
-    ydim="yh",
+    dim_names={'xh':'xh', 'yh':'yh'},
     section_coord="sect",
     new_algo=False,
     ):
@@ -39,51 +39,56 @@ def extract_tracer(
     uvindices = uvindices_from_qindices(isec, jsec, symmetric)
 
     if new_algo:
-        pass
-#         section = xr.Dataset()
-#         section["i"] = xr.DataArray(uvindices["i"], dims=section_coord)
-#         section["j"] = xr.DataArray(uvindices["j"], dims=section_coord)
-#         section["Usign"] = xr.DataArray(np.float64(~uvindices['nward'])*2-1, dims=section_coord)
-#         section["Vsign"] = xr.DataArray(np.float64(uvindices['eward'])*2-1, dims=section_coord)
-#         section["Umask"] = xr.DataArray(uvindices["var"]=="U", dims=section_coord)
-#         section["Vmask"] = xr.DataArray(uvindices["var"]=="V", dims=section_coord)
-
-#         usel = {dim_names["yh"]: np.mod(section["j"], ds[dim_names["yh"]].size), dim_names["xq"]: section["i"]}
-#         vsel = {dim_names["xh"]: np.mod(section["i"], ds[dim_names["xh"]].size), dim_names["yq"]: section["j"]}
-
-#         dsout = xr.Dataset({outname: (
-#              (ds[utr].isel(usel).fillna(0.) * section["Usign"] * section["Umask"])
-#             +(ds[vtr].isel(vsel).fillna(0.) * section["Vsign"] * section["Vmask"])
-#         ) * orient_fact})
-
-#         if (cell_widths['U'] in ds.coords) and (cell_widths['V'] in ds.coords):
-#             dsout = dsout.assign_coords({'dl': xr.DataArray((
-#                  (ds[cell_widths['U']].isel(usel).fillna(0.) * section["Umask"])
-#                 +(ds[cell_widths['V']].isel(vsel).fillna(0.) * section["Vmask"])
-#             ), dims=(section_coord,), attrs={'units':'m'})})
-
+        
+        section = xr.Dataset()
+        section["i"] = xr.DataArray(uvindices["i"], dims=section_coord)
+        section["j"] = xr.DataArray(uvindices["j"], dims=section_coord)
+        section["Umask"] = xr.DataArray(uvindices["var"]=="U", dims=section_coord)
+        section["Vmask"] = xr.DataArray(uvindices["var"]=="V", dims=section_coord)
+        
+        usel = {dim_names["xh"]: np.mod(section["i"]-np.int64(symmetric), da[dim_names["xh"]].size),
+                dim_names["yh"]: np.mod(section["j"]                    , da[dim_names["yh"]].size)}
+        usel_next = {dim_names["xh"]: np.mod(section["i"]+1-np.int64(symmetric), da[dim_names["xh"]].size),
+                     dim_names["yh"]: np.mod(section["j"]                      , da[dim_names["yh"]].size)}
+        
+        vsel = {dim_names["xh"]: np.mod(section["i"]                    , da[dim_names["xh"]].size),
+                dim_names["yh"]: np.mod(section["j"]-np.int64(symmetric), da[dim_names["yh"]].size)}
+        vsel_next = {dim_names["xh"]: np.mod(section["i"]                      , da[dim_names["xh"]].size),
+                     dim_names["yh"]: np.mod(section["j"]+1-np.int64(symmetric), da[dim_names["yh"]].size)}
+        
+        tracer = (
+             ( 0.5*(da.isel(usel) + da.isel(usel_next)).fillna(0.) * section["Umask"])
+            +( 0.5*(da.isel(vsel) + da.isel(vsel_next)).fillna(0.) * section["Vmask"])
+        )
+        tracer = tracer.where(tracer!=0., np.nan)
         
     else:
         def sample_pt(uvindices, i):
             return {k:v[i] for (k,v) in uvindices.items()}
 
         # interp onto U or V point
-        def extract_1pt(da, uvindex, xdim=xdim, ydim=ydim):
+        def extract_1pt(da, uvindex, dim_names=dim_names):
             i, j = uvindex["i"], uvindex["j"]
             if uvindex["var"] == "U":
-                interp_data = da.isel({xdim: slice(i, i + 2), ydim: j}).mean(
-                    dim=[xdim], skipna=True
+                interp_data = da.isel({dim_names["xh"]: slice(
+                        i   - np.int64(symmetric),
+                        i+2 - np.int64(symmetric)
+                    ), dim_names["yh"]: j}).mean(
+                    dim=[dim_names["xh"]], skipna=False
                 )
             elif uvindex["var"] == "V":
-                interp_data = da.isel({ydim: slice(j, j + 2), xdim: i}).mean(
-                    dim=[ydim], skipna=True
+                interp_data = da.isel({dim_names["yh"]: slice(
+                        j   - np.int64(symmetric),
+                        j+2 - np.int64(symmetric)
+                    ), dim_names["xh"]: i}).mean(
+                    dim=[dim_names["yh"]], skipna=False
                 )
             else:
                 raise ValueError("point-type can only be U or V")
-            if xdim in interp_data.coords:
-                interp_data = interp_data.reset_coords(names=xdim, drop=True)
-            if ydim in interp_data.coords:
-                interp_data = interp_data.reset_coords(names=ydim, drop=True)
+            if dim_names["xh"] in interp_data.coords:
+                interp_data = interp_data.reset_coords(names=dim_names["xh"], drop=True)
+            if dim_names["yh"] in interp_data.coords:
+                interp_data = interp_data.reset_coords(names=dim_names["yh"], drop=True)
             return interp_data.expand_dims(section_coord)
 
         tracer = extract_1pt(da, sample_pt(uvindices, 0))
