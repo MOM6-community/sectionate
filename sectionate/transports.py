@@ -15,8 +15,8 @@ def uvindices_from_qindices(isec, jsec, symmetric):
     }
     for k in range(0, nsec-1):
         zonal = not(jsec[k+1] != jsec[k])
-        nward = jsec[k+1] > jsec[k]
         eward = isec[k+1] > isec[k]
+        nward = jsec[k+1] > jsec[k]
         # Handle corner cases for wrapping boundaries
         if (isec[k+1] - isec[k])>1: eward = False
         elif (isec[k+1] - isec[k])<-1: eward = True
@@ -27,8 +27,8 @@ def uvindices_from_qindices(isec, jsec, symmetric):
             'nward': nward,
             'eward': eward,
         }
-        uvindex['i'] += np.int64(not(symmetric) and (not(zonal)))
-        uvindex['j'] += np.int64(not(symmetric) and zonal)
+        uvindex['i'] += np.int64(not(symmetric) and zonal)
+        uvindex['j'] += np.int64(not(symmetric) and not(zonal))
         for (key, v) in uvindices.items():
             v[k] = uvindex[key]
     return uvindices
@@ -37,17 +37,22 @@ def uvcoords_from_uvindices(grid, uvindices, coord_prefix="geo", dim_names={'xh'
     lons, lats = np.zeros(len(uvindices['var'])), np.zeros(len(uvindices['var']))
 
     geo_coords = [c for c in list(grid.coords)+list(grid.data_vars) if coord_prefix in c]
-    hnames = {f"{coord_prefix}{d}_h":c for d,c in {d:c for d in ['lon', 'lat'] for c in geo_coords
-                                                   if (dim_names['xh'] in grid[c].dims) and (dim_names['yh'] in grid[c].dims) if d in c}.items()}
-    unames = {f"{coord_prefix}{d}_u":c for d,c in {d:c for d in ['lon', 'lat'] for c in geo_coords
-                                                   if (dim_names['xq'] in grid[c].dims) and (dim_names['yh'] in grid[c].dims) if d in c}.items()}
-    vnames = {f"{coord_prefix}{d}_v":c for d,c in {d:c for d in ['lon', 'lat'] for c in geo_coords
-                                                   if (dim_names['xh'] in grid[c].dims) and (dim_names['yq'] in grid[c].dims) if d in c}.items()}
-    qnames = {f"{coord_prefix}{d}_q":c for d,c in {d:c for d in ['lon', 'lat'] for c in geo_coords
-                                                   if (dim_names['xq'] in grid[c].dims) and (dim_names['yq'] in grid[c].dims) if d in c}.items()}
+    hnames = {f"{coord_prefix}{d}_h":c for d,c in
+              {d:c for d in ['lon', 'lat'] for c in geo_coords
+               if (dim_names['xh'] in grid[c].dims) and (dim_names['yh'] in grid[c].dims) if d in c}.items()}
+    unames = {f"{coord_prefix}{d}_u":c for d,c in
+              {d:c for d in ['lon', 'lat'] for c in geo_coords
+               if (dim_names['xq'] in grid[c].dims) and (dim_names['yh'] in grid[c].dims) if d in c}.items()}
+    vnames = {f"{coord_prefix}{d}_v":c for d,c in
+              {d:c for d in ['lon', 'lat'] for c in geo_coords
+               if (dim_names['xh'] in grid[c].dims) and (dim_names['yq'] in grid[c].dims) if d in c}.items()}
+    qnames = {f"{coord_prefix}{d}_q":c for d,c in
+              {d:c for d in ['lon', 'lat'] for c in geo_coords
+               if (dim_names['xq'] in grid[c].dims) and (dim_names['yq'] in grid[c].dims) if d in c}.items()}
     
     for p in range(len(uvindices['var'])):
         var, i, j = uvindices['var'][p], uvindices['i'][p], uvindices['j'][p]
+        i = np.mod(i, grid[dim_names['xh']].size)
         if var == 'U':
             if (f"{coord_prefix}lon_u" in unames) and (f"{coord_prefix}lat_u" in unames):
                 lon = grid[unames[f"{coord_prefix}lon_u"]].isel({dim_names['xq']:i, dim_names['yh']:j}).values
