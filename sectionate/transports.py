@@ -75,8 +75,20 @@ def uvcoords_from_uvindices(grid, uvindices, coord_prefix="geo", dim_names={'xh'
         lats[p] = lat
     return lons, lats
     
-def uvcoords_from_qindices(grid, isec, jsec, symmetric, coord_prefix="geo", dim_names={'xh':'xh', 'yh':'yh', 'xq':'xq', 'yq':'yq'}):
-    return uvcoords_from_uvindices(grid, uvindices_from_qindices(isec, jsec, symmetric), coord_prefix=coord_prefix, dim_names=dim_names)
+def uvcoords_from_qindices(
+        grid,
+        isec,
+        jsec,
+        symmetric,
+        coord_prefix="geo",
+        dim_names={'xh':'xh', 'yh':'yh', 'xq':'xq', 'yq':'yq'}
+    ):
+    return uvcoords_from_uvindices(
+        grid,
+        uvindices_from_qindices(isec, jsec, symmetric),
+        coord_prefix=coord_prefix,
+        dim_names=dim_names
+    )
 
 def convergent_transport(
         ds,
