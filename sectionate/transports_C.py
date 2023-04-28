@@ -384,6 +384,8 @@ def sectionate_gridwidth(
     ds,
     isec,
     jsec,
+    uname="dyCu",
+    vname="dxCv",
     layer="z_l",
     interface="z_i",
     outname="cell_area",
@@ -397,16 +399,16 @@ def sectionate_gridwidth(
     
     for pt in uvpoints:
         if pt[0] == "U":
-            tmp = grid['dyCu'].isel(xq=pt[1], yh=pt[2] + offset_center_y).rename({"yh": "ysec", "xq": "xsec"}).expand_dims(dim=section, axis=-1)
+            tmp = grid[uname].isel(xq=pt[1], yh=pt[2] + offset_center_y).rename({"yh": "ysec", "xq": "xsec"}).expand_dims(dim=section, axis=-1)
         if pt[0] == "V":
-            tmp = grid['dxCv'].isel(xh=pt[1] + offset_center_x, yq=pt[2]).rename({"yq": "ysec", "xh": "xsec"}).expand_dims(dim=section, axis=-1)
+            tmp = grid[vname].isel(xh=pt[1] + offset_center_x, yq=pt[2]).rename({"yq": "ysec", "xh": "xsec"}).expand_dims(dim=section, axis=-1)
         
         if out is None:
             out = tmp.copy()
         else:
             out = xr.concat([out, tmp], dim=section)
     
-    grid_height = ds['z_i'].diff('z_i').rename({'z_i' : 'z_l'})
+    grid_height = ds[interface].diff(interface).rename({interface : 'z_l'})
     grid_height[layer] = ds[layer]
     section_gridwidth = out.rename('section_gridwidth')
     section_cellarea = section_gridwidth * grid_height
