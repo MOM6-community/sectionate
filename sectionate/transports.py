@@ -33,42 +33,43 @@ def uvindices_from_qindices(isec, jsec, symmetric):
             v[k] = uvindex[key]
     return uvindices
 
-def uvcoords_from_uvindices(grid, uvindices, coord_prefix="geo", dim_names={'xh':'xh', 'yh':'yh', 'xq':'xq', 'yq':'yq'}):
+def uvcoords_from_uvindices(ds, grid, uvindices, coord_prefix="geo"):
     lons, lats = np.zeros(len(uvindices['var'])), np.zeros(len(uvindices['var']))
 
-    geo_coords = [c for c in list(grid.coords)+list(grid.data_vars) if coord_prefix in c]
+    coords = coord_dict(grid)
+    geo_coords = [c for c in list(ds.coords) if coord_prefix in c]
     hnames = {f"{coord_prefix}{d}_h":c for d,c in
               {d:c for d in ['lon', 'lat'] for c in geo_coords
-               if (dim_names['xh'] in grid[c].dims) and (dim_names['yh'] in grid[c].dims) if d in c}.items()}
+               if (coords["X"]["h"] in ds[c].coords) and (coords["Y"]["h"] in ds[c].coords) if d in c}.items()}
     unames = {f"{coord_prefix}{d}_u":c for d,c in
               {d:c for d in ['lon', 'lat'] for c in geo_coords
-               if (dim_names['xq'] in grid[c].dims) and (dim_names['yh'] in grid[c].dims) if d in c}.items()}
+               if (coords["X"]["q"] in ds[c].coords) and (coords["Y"]["h"] in ds[c].coords) if d in c}.items()}
     vnames = {f"{coord_prefix}{d}_v":c for d,c in
               {d:c for d in ['lon', 'lat'] for c in geo_coords
-               if (dim_names['xh'] in grid[c].dims) and (dim_names['yq'] in grid[c].dims) if d in c}.items()}
+               if (coords["X"]["h"] in ds[c].coords) and (coords["Y"]["q"] in ds[c].coords) if d in c}.items()}
     qnames = {f"{coord_prefix}{d}_q":c for d,c in
               {d:c for d in ['lon', 'lat'] for c in geo_coords
-               if (dim_names['xq'] in grid[c].dims) and (dim_names['yq'] in grid[c].dims) if d in c}.items()}
+               if (coords["X"]["q"] in ds[c].coords) and (coords["Y"]["q"] in ds[c].coords) if d in c}.items()}
     
     for p in range(len(uvindices['var'])):
         var, i, j = uvindices['var'][p], uvindices['i'][p], uvindices['j'][p]
-        i = np.mod(i, grid[dim_names['xh']].size)
+        i = np.mod(i, ds[coords["X"]["h"]].size)
         if var == 'U':
             if (f"{coord_prefix}lon_u" in unames) and (f"{coord_prefix}lat_u" in unames):
-                lon = grid[unames[f"{coord_prefix}lon_u"]].isel({dim_names['xq']:i, dim_names['yh']:j}).values
-                lat = grid[unames[f"{coord_prefix}lat_u"]].isel({dim_names['xq']:i, dim_names['yh']:j}).values
+                lon = ds[unames[f"{coord_prefix}lon_u"]].isel({coords["X"]["q"]:i, coords["Y"]["h"]:j}).values
+                lat = ds[unames[f"{coord_prefix}lat_u"]].isel({coords["X"]["q"]:i, coords["Y"]["h"]:j}).values
             elif (f"{coord_prefix}lon_q" in qnames) and (f"{coord_prefix}lat_h" in hnames):
-                lon = grid[qnames[f"{coord_prefix}lon_q"]].isel({dim_names['xq']:i, dim_names['yq']:j}).values
-                lat = grid[hnames[f"{coord_prefix}lat_h"]].isel({dim_names['xh']:i, dim_names['yh']:j}).values
+                lon = ds[qnames[f"{coord_prefix}lon_q"]].isel({coords["X"]["q"]:i, coords["Y"]["q"]:j}).values
+                lat = ds[hnames[f"{coord_prefix}lat_h"]].isel({coords["X"]["h"]:i, coords["Y"]["h"]:j}).values
             else:
                 raise ValueError("Cannot locate grid coordinates necessary to identify U-velociy faces.")
         elif var == 'V':
             if (f"{coord_prefix}lon_v" in vnames) and (f"{coord_prefix}lat_v" in vnames):
-                lon = grid[vnames[f"{coord_prefix}lon_v"]].isel({dim_names['xh']:i, dim_names['yq']:j}).values
-                lat = grid[vnames[f"{coord_prefix}lat_v"]].isel({dim_names['xh']:i, dim_names['yq']:j}).values
+                lon = ds[vnames[f"{coord_prefix}lon_v"]].isel({coords["X"]["h"]:i, coords["Y"]["q"]:j}).values
+                lat = ds[vnames[f"{coord_prefix}lat_v"]].isel({coords["X"]["h"]:i, coords["Y"]["q"]:j}).values
             elif (f"{coord_prefix}lon_h" in hnames) and (f"{coord_prefix}lat_q" in qnames):
-                lon = grid[hnames[f"{coord_prefix}lon_h"]].isel({dim_names['xh']:i, dim_names['yh']:j}).values
-                lat = grid[qnames[f"{coord_prefix}lat_q"]].isel({dim_names['xq']:i, dim_names['yq']:j}).values
+                lon = ds[hnames[f"{coord_prefix}lon_h"]].isel({coords["X"]["h"]:i, coords["Y"]["h"]:j}).values
+                lat = ds[qnames[f"{coord_prefix}lat_q"]].isel({coords["X"]["q"]:i, coords["Y"]["q"]:j}).values
             else:
                 raise ValueError("Cannot locate grid coordinates necessary to identify V-velociy faces.")
         lons[p] = lon
@@ -76,41 +77,62 @@ def uvcoords_from_uvindices(grid, uvindices, coord_prefix="geo", dim_names={'xh'
     return lons, lats
     
 def uvcoords_from_qindices(
-        grid,
-        isec,
-        jsec,
-        symmetric,
-        coord_prefix="geo",
-        dim_names={'xh':'xh', 'yh':'yh', 'xq':'xq', 'yq':'yq'}
+    ds,
+    grid,
+    isec,
+    jsec,
+    coord_prefix="geo",
     ):
     return uvcoords_from_uvindices(
+        ds,
         grid,
-        uvindices_from_qindices(isec, jsec, symmetric),
+        uvindices_from_qindices(isec, jsec, check_symmetric(grid)),
         coord_prefix=coord_prefix,
-        dim_names=dim_names
     )
 
+def check_symmetric(grid):
+    x_sym = grid.axes['X']._default_shifts == {'center': 'outer', 'outer': 'center'}
+    y_sym = grid.axes['Y']._default_shifts == {'center': 'outer', 'outer': 'center'}
+    if x_sym and y_sym:
+        return True
+    elif not(x_sym) and not(y_sym):
+        return False
+    else:
+        raise ValueError("Horizontal grid axes ('X', 'Y') must be either both symmetric or both non-symmetric.")
+        
+def coord_dict(grid):
+    if check_symmetric(grid):
+        q_pos = "outer"
+    else:
+        q_pos = "right"
+        
+    return {
+        "X": {"h": grid.axes['X'].coords["center"], "q": grid.axes["X"].coords[q_pos]},
+        "Y": {"h": grid.axes['Y'].coords["center"], "q": grid.axes["Y"].coords[q_pos]},
+    }
+        
+
 def convergent_transport(
-        ds,
-        isec,
-        jsec,
-        symmetric,
-        utr="umo",
-        vtr="vmo",
-        layer="z_l",
-        interface="z_i",
-        outname="conv_mass_transport",
-        section_coord="sect",
-        counterclockwise=True,
-        dim_names={'xh':'xh', 'yh':'yh', 'xq':'xq', 'yq':'yq'},
-        cell_widths={'U':'dyCu', 'V':'dxCv'}
+    ds,
+    grid,
+    isec,
+    jsec,
+    utr="umo",
+    vtr="vmo",
+    layer="z_l",
+    interface="z_i",
+    outname="conv_mass_transport",
+    section_coord="sect",
+    counterclockwise=True,
+    dim_names={'xh':'xh', 'yh':'yh', 'xq':'xq', 'yq':'yq'},
+    cell_widths={'U':'dyCu', 'V':'dxCv'}
     ):
     
     if (layer is not None) and (interface is not None):
         if layer.replace("l", "i") != interface:
             raise ValueError("Inconsistent layer and interface grid variables!")
 
-    uvindices = uvindices_from_qindices(isec, jsec, symmetric)
+    uvindices = uvindices_from_qindices(isec, jsec, check_symmetric(grid))
     
     if counterclockwise:
         orient_fact = 1.
@@ -125,8 +147,9 @@ def convergent_transport(
     section["Umask"] = xr.DataArray(uvindices["var"]=="U", dims=section_coord)
     section["Vmask"] = xr.DataArray(uvindices["var"]=="V", dims=section_coord)
     
-    usel = {dim_names["yh"]: np.mod(section["j"], ds[dim_names["yh"]].size), dim_names["xq"]: section["i"]}
-    vsel = {dim_names["xh"]: np.mod(section["i"], ds[dim_names["xh"]].size), dim_names["yq"]: section["j"]}
+    coords = coord_dict(grid)
+    usel = {coords["Y"]["h"]: np.mod(section["j"], ds[coords["Y"]["h"]].size), coords["X"]["q"]: section["i"]}
+    vsel = {coords["X"]["h"]: np.mod(section["i"], ds[coords["X"]["h"]].size), coords["Y"]["q"]: section["j"]}
     
     dsout = xr.Dataset({outname: (
          (ds[utr].isel(usel).fillna(0.) * section["Usign"] * section["Umask"])

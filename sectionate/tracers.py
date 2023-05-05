@@ -1,13 +1,12 @@
 import numpy as np
 import xarray as xr
-from sectionate.transports import uvindices_from_qindices
+from sectionate.transports import uvindices_from_qindices, check_symmetric, coord_dict
 
 def extract_tracer(
     da,
+    grid,
     isec,
     jsec,
-    symmetric,
-    dim_names={'xh':'xh', 'yh':'yh'},
     section_coord="sect"
     ):
     """extract tracer data on cell thickness grid along the broken line of (isec, jsec) for plotting
@@ -34,6 +33,9 @@ def extract_tracer(
     xarray.DataArray with data sampled on U and V points of the section.
     """
 
+    coords = coord_dict(grid)
+    symmetric = check_symmetric(grid)
+    
     # get indices of UV points from broken line
     uvindices = uvindices_from_qindices(isec, jsec, symmetric)
         
@@ -43,15 +45,15 @@ def extract_tracer(
     section["Umask"] = xr.DataArray(uvindices["var"]=="U", dims=section_coord)
     section["Vmask"] = xr.DataArray(uvindices["var"]=="V", dims=section_coord)
 
-    usel = {dim_names["xh"]: np.mod(section["i"]-np.int64(symmetric), da[dim_names["xh"]].size),
-            dim_names["yh"]: np.mod(section["j"]                    , da[dim_names["yh"]].size)}
-    usel_next = {dim_names["xh"]: np.mod(section["i"]+1-np.int64(symmetric), da[dim_names["xh"]].size),
-                 dim_names["yh"]: np.mod(section["j"]                      , da[dim_names["yh"]].size)}
+    usel = {coords["X"]["h"]: np.mod(section["i"]-np.int64(symmetric), da[coords["X"]["h"]].size),
+            coords["Y"]["h"]: np.mod(section["j"]                    , da[coords["Y"]["h"]].size)}
+    usel_next = {coords["X"]["h"]: np.mod(section["i"]+1-np.int64(symmetric), da[coords["X"]["h"]].size),
+                 coords["Y"]["h"]: np.mod(section["j"]                      , da[coords["Y"]["h"]].size)}
 
-    vsel = {dim_names["xh"]: np.mod(section["i"]                    , da[dim_names["xh"]].size),
-            dim_names["yh"]: np.mod(section["j"]-np.int64(symmetric), da[dim_names["yh"]].size)}
-    vsel_next = {dim_names["xh"]: np.mod(section["i"]                      , da[dim_names["xh"]].size),
-                 dim_names["yh"]: np.mod(section["j"]+1-np.int64(symmetric), da[dim_names["yh"]].size)}
+    vsel = {coords["X"]["h"]: np.mod(section["i"]                    , da[coords["X"]["h"]].size),
+            coords["Y"]["h"]: np.mod(section["j"]-np.int64(symmetric), da[coords["Y"]["h"]].size)}
+    vsel_next = {coords["X"]["h"]: np.mod(section["i"]                      , da[coords["X"]["h"]].size),
+                 coords["Y"]["h"]: np.mod(section["j"]+1-np.int64(symmetric), da[coords["Y"]["h"]].size)}
 
     tracer = (
          ( 0.5*(da.isel(usel) + da.isel(usel_next)).fillna(0.) * section["Umask"])
