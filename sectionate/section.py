@@ -318,15 +318,15 @@ def distance_on_unit_sphere(lat1, lon1, lat2, lon2, method="law of cosines", R=6
         cos = np.sin(phi1) * np.sin(phi2) * np.cos(theta1 - theta2) + np.cos(phi1) * np.cos(
             phi2
         )
-        arc = np.arccos(cos)/2
+        arc = np.arccos(cos)/2.
 
     if method=="haversine":
         lon1, lat1, lon2, lat2 = np.deg2rad(lon1), np.deg2rad(lat1), np.deg2rad(lon2), np.deg2rad(lat2)
         dlon = lon2 - lon1
         dlat = lat2 - lat1
-        a = np.sin(dlat / 2)**2 + np.cos(lat1)*np.cos(lat2)*np.sin(dlon / 2)**2
+        a = np.sin(dlat / 2.)**2 + np.cos(lat1)*np.cos(lat2)*np.sin(dlon / 2)**2
         arc = np.arcsin(np.sqrt(a))
     
     # Remember to multiply arc by the radius of the earth
     # in your favorite set of units to get length.
-    return 2 * R * arc
+    return 2. * R * arc
