@@ -2,7 +2,27 @@ import numpy as np
 import matplotlib.pyplot as plt
 import xarray as xr
 
-def create_section_composite(gridlon, gridlat, segment_lons, segment_lats, symmetric, closed=False, periodic=True):
+from .gridutils import get_geo_corners, check_symmetric
+
+def grid_section(grid, lons, lats):
+    geocorners = get_geo_corners(grid)
+    return create_section_composite(
+        geocorners["X"],
+        geocorners["Y"],
+        lons,
+        lats,
+        check_symmetric(grid),
+        periodic=grid.axes['X']._periodic == ("X")
+    )
+
+def create_section_composite(
+    gridlon,
+    gridlat,
+    lons,
+    lats,
+    symmetric,
+    periodic=True
+    ):
     """create section from list of segments
 
     PARAMETERS:
@@ -12,9 +32,9 @@ def create_section_composite(gridlon, gridlat, segment_lons, segment_lats, symme
         2d array of longitude
     gridlat: np.ndarray
         2d array of latitude
-    segment_lons: list of float
+    lons: list of float
         longitude of section starting, intermediate and end points
-    segment_lats: list of float
+    lats: list of float
         latitude of section starting, intermediate and end points
 
 
@@ -23,61 +43,65 @@ def create_section_composite(gridlon, gridlat, segment_lons, segment_lats, symme
 
     isect, jsect: list of int
         list of (i,j) pairs for section
-    xsect, ysect: list of float
+    lonsect, latsect: list of float
         corresponding longitude and latitude for isect, jsect
 
     """
 
     isect = np.array([], dtype=np.int64)
     jsect = np.array([], dtype=np.int64)
-    xsect = np.array([], dtype=np.float64)
-    ysect = np.array([], dtype=np.float64)
+    lonsect = np.array([], dtype=np.float64)
+    latsect = np.array([], dtype=np.float64)
 
-    if len(segment_lons) != len(segment_lats):
-        raise ValueError("segment_lons and segment_lats should have the same length")
+    if len(lons) != len(lats):
+        raise ValueError("lons and lats should have the same length")
         
-    for k in range(len(segment_lons) - 1):
-        iseg, jseg, xseg, yseg = create_section(
+    for k in range(len(lons) - 1):
+        iseg, jseg, lonseg, latseg = create_section(
             gridlon,
             gridlat,
-            segment_lons[k],
-            segment_lats[k],
-            segment_lons[k + 1],
-            segment_lats[k + 1],
+            lons[k],
+            lats[k],
+            lons[k + 1],
+            lats[k + 1],
             symmetric,
             periodic=periodic
         )
 
         isect = np.concatenate([isect, iseg[:-1]], axis=0)
         jsect = np.concatenate([jsect, jseg[:-1]], axis=0)
-        xsect = np.concatenate([xsect, xseg[:-1]], axis=0)
-        ysect = np.concatenate([ysect, yseg[:-1]], axis=0)
+        lonsect = np.concatenate([lonsect, lonseg[:-1]], axis=0)
+        latsect = np.concatenate([latsect, latseg[:-1]], axis=0)
         
-    if not closed:
-        isect = np.concatenate([isect, [iseg[-1]]], axis=0)
-        jsect = np.concatenate([jsect, [jseg[-1]]], axis=0)
-        xsect = np.concatenate([xsect, [xseg[-1]]], axis=0)
-        ysect = np.concatenate([ysect, [yseg[-1]]], axis=0)
-        
-    if closed:
-        isect = np.append(isect, isect[0])
-        jsect = np.append(jsect, jsect[0])
-        xsect = np.append(xsect, xsect[0])
-        ysect = np.append(ysect, ysect[0])
+    isect = np.concatenate([isect, [iseg[-1]]], axis=0)
+    jsect = np.concatenate([jsect, [jseg[-1]]], axis=0)
+    lonsect = np.concatenate([lonsect, [lonseg[-1]]], axis=0)
+    latsect = np.concatenate([latsect, [latseg[-1]]], axis=0)
 
-    return isect.astype(np.int64), jsect.astype(np.int64), xsect, ysect
+    return isect.astype(np.int64), jsect.astype(np.int64), lonsect, latsect
 
 def create_section(gridlon, gridlat, lonstart, latstart, lonend, latend, symmetric, periodic=True):
     """ replacement function for the old create_section """
 
-    if symmetric:
-        gridlon=gridlon[1:,1:]
-        gridlat=gridlat[1:,1:]
+    if symmetric and periodic:
+        gridlon=gridlon[:,1:]
+        gridlat=gridlat[:,1:]
         
     iseg, jseg, lonseg, latseg = infer_grid_path_from_geo(
-        lonstart, latstart, lonend, latend, gridlon, gridlat, periodic=periodic
+        lonstart,
+        latstart,
+        lonend,
+        latend,
+        gridlon,
+        gridlat,
+        periodic=periodic
     )
-    return iseg+np.int64(symmetric), jseg+np.int64(symmetric), lonseg, latseg
+    return (
+        iseg+np.int64(symmetric and periodic),
+        jseg,
+        lonseg,
+        latseg
+    )
 
 def infer_grid_path_from_geo(lonstart, latstart, lonend, latend, gridlon, gridlat, periodic=True):
     """find the grid path joining (lonstart, latstart) and (lonend, latend) pairs
@@ -108,10 +132,26 @@ def infer_grid_path_from_geo(lonstart, latstart, lonend, latend, gridlon, gridla
         corresponding longitude and latitude for iseg, jseg
     """
 
-    istart, jstart = find_closest_grid_point(lonstart, latstart, gridlon, gridlat)
-    iend, jend = find_closest_grid_point(lonend, latend, gridlon, gridlat)
+    istart, jstart = find_closest_grid_point(
+        lonstart,
+        latstart,
+        gridlon,
+        gridlat
+    )
+    iend, jend = find_closest_grid_point(
+        lonend,
+        latend,
+        gridlon,
+        gridlat
+    )
     iseg, jseg, lonseg, latseg = infer_grid_path(
-        istart, jstart, iend, jend, gridlon, gridlat, periodic=periodic
+        istart,
+        jstart,
+        iend,
+        jend,
+        gridlon,
+        gridlat,
+        periodic=periodic
     )
 
     return iseg, jseg, lonseg, latseg
@@ -278,7 +318,7 @@ def distance_on_unit_sphere(lat1, lon1, lat2, lon2, method="law of cosines", R=6
         cos = np.sin(phi1) * np.sin(phi2) * np.cos(theta1 - theta2) + np.cos(phi1) * np.cos(
             phi2
         )
-        arc = np.arccos(cos)
+        arc = np.arccos(cos)/2
 
     if method=="haversine":
         lon1, lat1, lon2, lat2 = np.deg2rad(lon1), np.deg2rad(lat1), np.deg2rad(lon2), np.deg2rad(lat2)

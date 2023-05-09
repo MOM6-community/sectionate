@@ -1,15 +1,23 @@
 import numpy as np
 import xarray as xr
-from sectionate.transports import uvindices_from_qindices, check_symmetric, coord_dict
+from .transports import (
+    uvindices_from_qindices,
+    coord_dict
+)
+
+from .gridutils import (
+    check_symmetric
+)
 
 def extract_tracer(
-    da,
+    name,
     grid,
     isec,
     jsec,
     section_coord="sect"
     ):
-    """extract tracer data on cell thickness grid along the broken line of (isec, jsec) for plotting
+    """Extract tracer data on cell thickness grid along the grid path
+    of (isec, jsec) for plotting.
 
     PARAMETERS:
     -----------
@@ -32,12 +40,13 @@ def extract_tracer(
 
     xarray.DataArray with data sampled on U and V points of the section.
     """
-
+    
+    da=grid._ds[name]
     coords = coord_dict(grid)
     symmetric = check_symmetric(grid)
     
     # get indices of UV points from broken line
-    uvindices = uvindices_from_qindices(isec, jsec, symmetric)
+    uvindices = uvindices_from_qindices(grid, isec, jsec)
         
     section = xr.Dataset()
     section["i"] = xr.DataArray(uvindices["i"], dims=section_coord)
