@@ -23,6 +23,21 @@ def get_geo_corners(grid):
         for axis, geoc in zip(["X", "Y"], ["lon", "lat"])
     }
     
+def coord_dict(grid):
+    if check_symmetric(grid):
+        q_pos = "outer"
+    else:
+        q_pos = "right"
+        
+    return {
+        "X": {
+            "h": grid.axes['X'].coords["center"],
+            "q": grid.axes["X"].coords[q_pos]},
+        "Y": {
+            "h": grid.axes['Y'].coords["center"],
+            "q": grid.axes["Y"].coords[q_pos]},
+    }
+    
 def check_symmetric(grid):
     x_sym = "outer" in grid.axes['X'].coords
     y_sym = "outer" in grid.axes['Y'].coords

@@ -1,8 +1,10 @@
+import warnings
 import numpy as np
 import xarray as xr
 import dask
 
-from .gridutils import check_symmetric
+from .gridutils import check_symmetric, coord_dict, get_geo_corners
+from .section import distance_on_unit_sphere
 
 def uvindices_from_qindices(grid, isec, jsec):
     """From vorticity (q) points given by section, infer u-v points using MOM6 conventions:
@@ -119,21 +121,6 @@ def uvcoords_from_qindices(grid, isec, jsec):
         grid,
         uvindices_from_qindices(grid, isec, jsec),
     )
-        
-def coord_dict(grid):
-    if check_symmetric(grid):
-        q_pos = "outer"
-    else:
-        q_pos = "right"
-        
-    return {
-        "X": {
-            "h": grid.axes['X'].coords["center"],
-            "q": grid.axes["X"].coords[q_pos]},
-        "Y": {
-            "h": grid.axes['Y'].coords["center"],
-            "q": grid.axes["Y"].coords[q_pos]},
-    }
 
 def convergent_transport(
     grid,
@@ -145,8 +132,8 @@ def convergent_transport(
     interface="z_i",
     outname="conv_mass_transport",
     sect_coord="sect",
-    counterclockwise=True,
-    mask_inside=True,
+    geometry="spherical",
+    positive_in=True,
     cell_widths={'U':'dyCu', 'V':'dxCv'},
     ):
     
@@ -179,11 +166,24 @@ def convergent_transport(
     sect["Vmask"] = xr.DataArray(uvindices["var"]=="V", dims=sect_coord)
     
     mask_types = (np.ndarray, dask.array.Array, xr.DataArray)
-    if isinstance(mask_inside, mask_types):
-        mask_inside = is_mask_inside(mask_inside, grid, sect)
+    if isinstance(positive_in, mask_types):
+        positive_in = is_mask_inside(positive_in, grid, sect)
     else:
-        mask_inside = mask_inside ^ (not(counterclockwise))
-    orient_fact = np.int32(mask_inside)*2-1
+        if geometry=="cartesian" and grid.axes['X']._periodic is not False:
+            raise ValueError("Periodic cartesian domains are not yet supported!")
+        coords = coord_dict(grid)
+        geo_corners = get_geo_corners(grid)
+        idx = {
+            coords['X']['q']:xr.DataArray(isec, dims=("pt",)),
+            coords['Y']['q']:xr.DataArray(jsec, dims=("pt",)),
+        }
+        counterclockwise = is_section_counterclockwise(
+            geo_corners['X'].isel(idx).values,
+            geo_corners['Y'].isel(idx).values,
+            geometry
+        )
+        positive_in = positive_in ^ (not(counterclockwise))
+    orient_fact = np.int32(positive_in)*2-1
     
     coords = coord_dict(grid)
     usel = {
@@ -247,8 +247,7 @@ def convergent_transport(
     })
     dsout[outname].attrs = {**dsout[outname].attrs, **{
         'orient_fact':orient_fact,
-        'mask_inside':mask_inside,
-        'counterclockwise':counterclockwise
+        'positive_in':positive_in,
     }}
     dsout[outname].attrs
     
@@ -258,6 +257,36 @@ def convergent_transport(
             dsout[interface] = grid._ds[interface]
 
     return dsout
+
+def is_section_counterclockwise(lons, lats, geometry="spherical"):
+    
+    if distance_on_unit_sphere(lons[0], lats[0], lons[-1], lats[-1]) > 10.:
+        warnings.warn("The orientation of open sections is ambiguous–verify that it matches expectations!")
+        lons = np.append(lons, lons[0])
+        lats = np.append(lats, lats[0])
+    
+    if geometry == "spherical":
+        X, Y = stereographic_projection(lons, lats)
+    elif geometry == "cartesian":
+        X, Y = lons, lats
+    else:
+        raise ValueError("Only 'spherical' and 'cartesian' geometries are currently supported.")
+    
+    signed_area = 0.
+    for i in range(X.size-1):
+        signed_area += (X[i+1]-X[i])*(Y[i+1]+Y[i])
+    return signed_area < 0.
+
+def stereographic_projection(lons, lats):
+    varphi = np.deg2rad(-lats+90.)
+    theta = np.deg2rad(lons)
+    
+    R = np.sin(varphi)/(1. - np.cos(varphi))
+    Theta = -theta
+    
+    X, Y = R*np.cos(Theta), R*np.sin(Theta)
+    
+    return X, Y
 
 def is_mask_inside(mask, grid, sect, idx=0):
     symmetric = check_symmetric(grid)
@@ -270,17 +299,17 @@ def is_mask_inside(mask, grid, sect, idx=0):
         )
         j = sect['j'][idx]
         if 0<=i<=grid._ds[coords["X"]["h"]].size-1:
-            mask_inside = mask.isel({
+            positive_in = mask.isel({
                 coords["X"]["h"]: i,
                 coords["Y"]["h"]: j
             }).values
         elif i==-1:
-            mask_inside = not(mask.isel({
+            positive_in = not(mask.isel({
                 coords["X"]["h"]: i+1,
                 coords["Y"]["h"]: j
             })).values
         elif i==grid._ds[coords["X"]["h"]].size:
-            mask_inside = not(mask.isel({
+            positive_in = not(mask.isel({
                 coords["X"]["h"]: i-1,
                 coords["Y"]["h"]: j
             })).values
@@ -292,21 +321,21 @@ def is_mask_inside(mask, grid, sect, idx=0):
             + int(not(symmetric))
         )
         if 0<=j<=grid._ds[coords["Y"]["h"]].size-1:
-            mask_inside = mask.isel({
+            positive_in = mask.isel({
                 coords["X"]["h"]: i,
                 coords["Y"]["h"]: j
             }).values
         elif j==-1:
-            mask_inside = not(mask.isel({
+            positive_in = not(mask.isel({
                 coords["X"]["h"]: i,
                 coords["Y"]["h"]: j+1,
             })).values
         elif j==grid._ds[coords["Y"]["h"]].size:
-            mask_inside = not(mask.isel({
+            positive_in = not(mask.isel({
                 coords["X"]["h"]: i,
                 coords["Y"]["h"]: j-1
             })).values
-    return mask_inside
+    return positive_in
 
 
 def wrap_idx(idx, grid, axis):

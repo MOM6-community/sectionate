@@ -1,12 +1,12 @@
 import numpy as np
 import xarray as xr
 from .transports import (
-    uvindices_from_qindices,
-    coord_dict
+    uvindices_from_qindices
 )
 
 from .gridutils import (
-    check_symmetric
+    check_symmetric,
+    coord_dict
 )
 
 def extract_tracer(

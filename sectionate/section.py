@@ -298,7 +298,6 @@ def find_closest_grid_point(lon, lat, gridlon, gridlat):
     jclose, iclose = np.unravel_index(dist.argmin(), gridlon.shape)
     return iclose, jclose
 
-
 def distance_on_unit_sphere(lat1, lon1, lat2, lon2, method="law of cosines", R=6.371e6):
 
     if method=="law of cosines":
