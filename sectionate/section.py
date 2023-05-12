@@ -4,7 +4,7 @@ import xarray as xr
 
 from .gridutils import get_geo_corners, check_symmetric
 
-def grid_section(grid, lons, lats):
+def grid_section(grid, lons, lats, topology="MOM6-tripolar"):
     geocorners = get_geo_corners(grid)
     return create_section_composite(
         geocorners["X"],
@@ -12,7 +12,8 @@ def grid_section(grid, lons, lats):
         lons,
         lats,
         check_symmetric(grid),
-        periodic=grid.axes['X']._periodic == ("X")
+        periodic=(grid.axes['X']._periodic),
+        topology=topology
     )
 
 def create_section_composite(
@@ -21,7 +22,8 @@ def create_section_composite(
     lons,
     lats,
     symmetric,
-    periodic=True
+    periodic=("X"),
+    topology="MOM6-tripolar"
     ):
     """create section from list of segments
 
@@ -65,7 +67,8 @@ def create_section_composite(
             lons[k + 1],
             lats[k + 1],
             symmetric,
-            periodic=periodic
+            periodic=periodic,
+            topology=topology
         )
 
         isect = np.concatenate([isect, iseg[:-1]], axis=0)
@@ -80,13 +83,13 @@ def create_section_composite(
 
     return isect.astype(np.int64), jsect.astype(np.int64), lonsect, latsect
 
-def create_section(gridlon, gridlat, lonstart, latstart, lonend, latend, symmetric, periodic=True):
+def create_section(gridlon, gridlat, lonstart, latstart, lonend, latend, symmetric, periodic=("X"), topology="MOM6-tripolar"):
     """ replacement function for the old create_section """
 
-    if symmetric and periodic:
-        gridlon=gridlon[:,1:]
-        gridlat=gridlat[:,1:]
-        
+    if symmetric and periodic==("X"):
+        gridlon=gridlon[:,:-1]
+        gridlat=gridlat[:,:-1]
+
     iseg, jseg, lonseg, latseg = infer_grid_path_from_geo(
         lonstart,
         latstart,
@@ -94,16 +97,17 @@ def create_section(gridlon, gridlat, lonstart, latstart, lonend, latend, symmetr
         latend,
         gridlon,
         gridlat,
-        periodic=periodic
+        periodic=periodic,
+        topology=topology
     )
     return (
-        iseg+np.int64(symmetric and periodic),
+        iseg,
         jseg,
         lonseg,
         latseg
     )
 
-def infer_grid_path_from_geo(lonstart, latstart, lonend, latend, gridlon, gridlat, periodic=True):
+def infer_grid_path_from_geo(lonstart, latstart, lonend, latend, gridlon, gridlat, periodic=("X"), topology="MOM6-tripolar"):
     """find the grid path joining (lonstart, latstart) and (lonend, latend) pairs
 
     PARAMETERS:
@@ -151,13 +155,14 @@ def infer_grid_path_from_geo(lonstart, latstart, lonend, latend, gridlon, gridla
         jend,
         gridlon,
         gridlat,
-        periodic=periodic
+        periodic=periodic,
+        topology=topology
     )
 
     return iseg, jseg, lonseg, latseg
 
 
-def infer_grid_path(i1, j1, i2, j2, gridlon, gridlat, periodic=True):
+def infer_grid_path(i1, j1, i2, j2, gridlon, gridlat, periodic=("X"), topology="MOM6-tripolar"):
     """find the grid path joining (i1, j1) and (i2, j2) pairs
 
     PARAMETERS:
@@ -196,9 +201,8 @@ def infer_grid_path(i1, j1, i2, j2, gridlon, gridlat, periodic=True):
         gridlat = gridlat.values
 
     # target coordinates
-    lon_start, lat_start = gridlon[j1, i1], gridlat[j1, i1]
-    lon_stop, lat_stop = gridlon[j2, i2], gridlat[j2, i2]
-    d_total = distance_on_unit_sphere(lon_start, lat_start, lon_stop, lat_stop)
+    lon1, lat1 = gridlon[j1, i1], gridlat[j1, i1]
+    lon2, lat2 = gridlon[j2, i2], gridlat[j2, i2]
     
     # init loop index to starting position
     i = i1
@@ -206,77 +210,94 @@ def infer_grid_path(i1, j1, i2, j2, gridlon, gridlat, periodic=True):
 
     iseg = [i]  # add first point to list of points
     jseg = [j]  # add first point to list of points
-    
-    # check if shortest path crosses periodic boundary (if applicable)
-    wraplons = False
-    if periodic:
-        wraplons = np.abs(lon_stop - lon_start) > 180.
-    wrapsign = int(not(wraplons))*2-1
-        
+
     # iterate through the grid path steps until we reach end of section
     ct = 0 # grid path step counter
 
-    print((i1, j1), (i2, j2))
+    # Grid-agnostic algorithm:
+    # First, find all four neighbors (subject to grid topology)
+    # Second, throw away any that are further from the destination than the current point
+    # Third, go to the valid neighbor that has the smallest angle from the arc path between the
+    # start and end points (the shortest geodesic path)
     while (i%nx != i2) or (j != j2):
-        # safety precaution, exit after N iterations
-        if ct > 1000:
+        # safety precaution: exit after taking enough steps to have crossed the entire model grid
+        if ct > (nx+ny+1):
             raise RuntimeError(f"Should have reached the endpoint by now: {ct}/{Nsteps} steps.")
 
-        if j!=ny-1:
-            j_up, i_up = j+1, i%nx
-        else:
-            j_up = j
-            i_up = (nx-1) - (i%nx)
-            print((i,j), (i_up, j_up))
-            
-        neighbors = [
-            (j, (i+1)%nx),
-            (j, (i-1)%nx),
-            (j-1, i%nx),
-            (j_up, i_up)
-        ]
+        d_current = distance_on_unit_sphere(
+                gridlon[j,i],
+                gridlat[j,i],
+                lon2,
+                lat2
+            )
         
-        shortest = np.inf
+        if d_current == 0.:
+            break
+        
+        if periodic==("X"):
+            right = (j, (i+1)%nx)
+            left = (j, (i-1)%nx)
+        else:
+            right = (j, np.clip(i+1, 0, nx-1))
+            left = (j, np.clip(i-1, 0, nx-1))
+        down = (np.clip(j-1, 0, ny-1), i)
+        
+        if topology=="MOM6-tripolar":
+            if j!=ny-1:
+                up = (j+1, i%nx)
+            else:
+                up = (j-1, (nx-1) - (i%nx))
+                
+        elif topology=="cartesian":
+                up = (np.clip(j+1, 0, ny-1), i)
+        else:
+            raise ValueError("Only 'cartesian' and 'MOM6-tripolar' grid topologies are currently supported.")
+        
+        neighbors = [right, left, down, up]
+        #print((j, i), " -> ", neighbors)
+        
+        smallest_angle = np.inf
+        d_list = []
         for (_j, _i) in neighbors:
-            d_step = distance_on_unit_sphere(
-                gridlon[j,i],
-                gridlat[j,i],
-                gridlon[_j,_i],
-                gridlat[_j,_i]
-            )
-            d_remaining = distance_on_unit_sphere(
-                gridlon[j,i],
-                gridlat[j,i],
-                lon_stop,
-                lat_stop
-            )
-            
-            lon_pred, lat_pred = arc_path(
-                lon_start,
-                lat_start,
-                lon_stop,
-                lat_stop,
-                1-(d_remaining-d_step*np.sqrt(2.))/d_total
-            )
             d = distance_on_unit_sphere(
                 gridlon[_j,_i],
                 gridlat[_j,_i],
-                lon_pred,
-                lat_pred
+                lon2,
+                lat2
             )
-            print(d_remaining/d_total, -d_step/d_total, d/d_total)
-            if d < shortest:
+            d_list.append(d/d_current)
+            if d==0.:
                 j_next, i_next = _j, _i
-                shortest = d
-                
-        print((i_next, j_next), "\n")
+                smallest_angle = 0.
+                break
+            elif d < d_current:
+                angle = spherical_angle(
+                    lon2,
+                    lat2,
+                    lon1,
+                    lat1,
+                    gridlon[_j,_i],
+                    gridlat[_j,_i],
+                )
+                if angle < smallest_angle:
+                    j_next, i_next = _j, _i
+                    smallest_angle = angle
+                    
+        # TODO: Better handling of the edge cases where none of the neighbors
+        # get us closer to the target coordinates! This seems to only happen when
+        # approaching the top corners of the grid (edges of the tripolar seams),
+        # but sectionate behaves quite strangely in these cases.
+        # Here, although none of the points get us closer to our target point, we 
+        # pick the one that is the closest and hope that will put us on the right path.
+        # Maybe it is the wrong choice.
+        if smallest_angle == np.inf:
+            (j_next, i_next) = neighbors[np.argmin(d_list)]
+
+        j_prev, i_prev = j,i
         
         j = j_next
         i = i_next
-        
-        j_last, i_last = j,i
 
-        # add new point to list
         iseg.append(i)
         jseg.append(j)
         
@@ -377,3 +398,11 @@ def arc_path(lon1, lat1, lon2, lat2, r):
     lats = np.rad2deg(np.arctan2(z, np.sqrt(x**2 + y**2)))
     
     return lons, lats
+
+def spherical_angle(lonA, latA, lonB, latB, lonC, latC):
+    
+    a = distance_on_unit_sphere(lonB, latB, lonC, latC, R=1.)
+    b = distance_on_unit_sphere(lonC, latC, lonA, latA, R=1.)
+    c = distance_on_unit_sphere(lonA, latA, lonB, latB, R=1.)
+        
+    return np.arccos(np.clip((np.cos(a) - np.cos(b)*np.cos(c))/(np.sin(b)*np.sin(c)), -1., 1.))

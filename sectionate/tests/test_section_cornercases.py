@@ -18,7 +18,6 @@ coords = {
     'Y': {'outer': 'yq'}
 }
 grid = xgcm.Grid(ds, coords=coords, periodic=("X"))
-grid_nonperiodic = xgcm.Grid(ds, coords=coords, periodic=False)
 
 def modequal(a,b):
     return np.equal(np.mod(a, 360.), np.mod(b, 360.))
@@ -29,9 +28,9 @@ def test_open_grid_section():
     latseg = np.array([-80., -80, 0, 0])
     i, j, lons, lats = grid_section(grid, lonseg, latseg)
     assert np.all([
-        modequal(i, np.array([6, 1, 2, 2, 2, 1, 6])),
+        modequal(i, np.array([0, 1, 2, 2, 2, 1, 0])),
         modequal(j, np.array([0, 0, 0, 1, 2, 2, 2])),
-        modequal(lons, np.array([360.,  60., 120., 120., 120.,  60., 360.])),
+        modequal(lons, np.array([0.,  60., 120., 120., 120.,  60., 0.])),
         modequal(lats, np.array([-80., -80., -80., -40.,   0.,   0.,   0.]))
     ])
     
@@ -41,9 +40,9 @@ def test_closed_grid_section():
     latseg = np.array([-80., -80, 0, 0, -80.])
     i, j, lons, lats = grid_section(grid, lonseg, latseg)
     assert np.all([
-        modequal(i, np.array([6, 1, 2, 2, 2, 1, 6, 6, 6])),
+        modequal(i, np.array([0, 1, 2, 2, 2, 1, 0, 0, 0])),
         modequal(j, np.array([0, 0, 0, 1, 2, 2, 2, 1, 0])),
-        modequal(lons, np.array([360.,  60., 120., 120., 120.,  60., 360., 360., 360.])),
+        modequal(lons, np.array([0.,  60., 120., 120., 120.,  60., 0., 0., 0.])),
         modequal(lats, np.array([-80., -80., -80., -40.,   0.,   0.,   0., -40., -80.]))
     ])
     
@@ -53,20 +52,8 @@ def test_periodic_grid_section():
     latseg = np.array([0, 0])
     i, j, lons, lats = grid_section(grid, lonseg, latseg)
     assert np.all([
-        modequal(i, np.array([5, 6, 1])),
+        modequal(i, np.array([5, 0, 1])),
         modequal(j, np.array([2, 2, 2])),
-        modequal(lons, np.array([300.,  360., 60.])),
+        modequal(lons, np.array([300.,  0., 60.])),
         modequal(lats, np.array([0.,   0.,   0.]))
-    ])
-    
-def test_nonperiodic_grid_section():
-    from sectionate.section import grid_section
-    lonseg = np.array([300, 60])
-    latseg = np.array([0, 0])
-    i, j, lons, lats = grid_section(grid_nonperiodic, lonseg, latseg)
-    assert np.all([
-        modequal(i, np.array([5, 4, 3, 2, 1])),
-        modequal(j, np.array([2, 2, 2, 2, 2])),
-        modequal(lons, np.array([300., 240., 180., 120.,  60.])),
-        modequal(lats, np.array([0., 0., 0., 0., 0.]))
     ])

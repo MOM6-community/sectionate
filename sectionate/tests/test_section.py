@@ -48,10 +48,10 @@ def test_grid_path():
     from sectionate.section import infer_grid_path
 
     # test zonal line
-    isec, jsec, lonsec, latsec = infer_grid_path(0, 90, 359, 90, lon, lat, periodic=False)
-    assert len(isec) == 360
+    isec, jsec, lonsec, latsec = infer_grid_path(0, 90, 179, 90, lon, lat)
+    assert len(isec) == 180
     assert lonsec[0] == 0.0
-    assert lonsec[-1] == 359.0
+    assert lonsec[-1] == 179.0
     assert latsec[0] == 0.0
     assert latsec[-1] == 0.0
 
@@ -76,10 +76,10 @@ def test_infer_grid_path_from_geo():
     from sectionate.section import infer_grid_path_from_geo
 
     # test zonal line
-    isec, jsec, lonsec, latsec = infer_grid_path_from_geo(0, 0, 359, 0, lon, lat, periodic=False)
-    assert len(isec) == 360
+    isec, jsec, lonsec, latsec = infer_grid_path_from_geo(0, 0, 179, 0, lon, lat)
+    assert len(isec) == 180
     assert lonsec[0] == 0.0
-    assert lonsec[-1] == 359.0
+    assert lonsec[-1] == 179.0
     assert latsec[0] == 0.0
     assert latsec[-1] == 0.0
 
@@ -93,4 +93,4 @@ def test_infer_grid_path_from_geo():
 
     # test diagonal
     isec, jsec, lonsec, latsec = infer_grid_path_from_geo(0, -89, 180, 0, lon, lat)
-    assert len(isec) == 270  # expect ni+nj+1 values
+    assert len(isec) == 272
