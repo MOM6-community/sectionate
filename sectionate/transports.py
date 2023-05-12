@@ -93,11 +93,11 @@ def uvcoords_from_uvindices(grid, uvindices):
         elif var == 'V':
             if (f"geolon_v" in vnames) and (f"geolat_v" in vnames):
                 lon = ds[vnames[f"geolon_v"]].isel({
-                    coords["X"]["h"]:i,
+                    coords["X"]["h"]:wrap_idx(i, grid, "X"),
                     coords["Y"]["q"]:j
                 }).values
                 lat = ds[vnames[f"geolat_v"]].isel({
-                    coords["X"]["h"]:i,
+                    coords["X"]["h"]:wrap_idx(i, grid, "X"),
                     coords["Y"]["q"]:j
                 }).values
             elif (f"geolon_h" in hnames) and (f"geolat_q" in qnames):
