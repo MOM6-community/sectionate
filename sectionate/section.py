@@ -237,7 +237,6 @@ def infer_grid_path(i1, j1, i2, j2, gridlon, gridlat, periodic=True):
         ]
         
         shortest = np.inf
-        d_steps = []
         for (_j, _i) in neighbors:
             d_step = distance_on_unit_sphere(
                 gridlon[j,i],
@@ -245,23 +244,27 @@ def infer_grid_path(i1, j1, i2, j2, gridlon, gridlat, periodic=True):
                 gridlon[_j,_i],
                 gridlat[_j,_i]
             )
-            d_steps.append(d_step)
-        
-        for (_j, _i) in neighbors:
-            lon_step, lat_step = arc_path(
+            d_remaining = distance_on_unit_sphere(
                 gridlon[j,i],
                 gridlat[j,i],
-                gridlon[_j,_i],
-                gridlat[_j,_i],
-                d_total/d_step
+                lon_stop,
+                lat_stop
             )
-            d = distance_on_unit_sphere(
+            
+            lon_pred, lat_pred = arc_path(
+                lon_start,
+                lat_start,
                 lon_stop,
                 lat_stop,
-                lon_step,
-                lat_step
+                1-(d_remaining-d_step*np.sqrt(2.))/d_total
             )
-            print(d)
+            d = distance_on_unit_sphere(
+                gridlon[_j,_i],
+                gridlat[_j,_i],
+                lon_pred,
+                lat_pred
+            )
+            print(d_remaining/d_total, -d_step/d_total, d/d_total)
             if d < shortest:
                 j_next, i_next = _j, _i
                 shortest = d
