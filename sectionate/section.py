@@ -195,73 +195,89 @@ def infer_grid_path(i1, j1, i2, j2, gridlon, gridlat, periodic=True):
     if isinstance(gridlat, xr.core.dataarray.DataArray):
         gridlat = gridlat.values
 
+    # target coordinates
+    lon_start, lat_start = gridlon[j1, i1], gridlat[j1, i1]
+    lon_stop, lat_stop = gridlon[j2, i2], gridlat[j2, i2]
+    d_total = distance_on_unit_sphere(lon_start, lat_start, lon_stop, lat_stop)
+    
     # init loop index to starting position
     i = i1
     j = j1
 
     iseg = [i]  # add first point to list of points
     jseg = [j]  # add first point to list of points
-    ct = 0  # counter for max iteration safeguard
     
     # check if shortest path crosses periodic boundary (if applicable)
     wraplons = False
     if periodic:
-        wraplons = np.abs(gridlon[j2, i2] - gridlon[j1, i1]) > 180.
+        wraplons = np.abs(lon_stop - lon_start) > 180.
     wrapsign = int(not(wraplons))*2-1
-
-    # find direction of iteration
-    idir = np.sign(i2 - i1)*wrapsign
-    jdir = np.sign(j2 - j1)
-
-    # find length of segment, as both straight line (L) and gri path following grid (Nsteps)
-    di = (((i2 - i1)*idir)%nx)*idir
-    dj = j2-j1
-    L = np.sqrt( di**2 + dj**2 )
-    Nsteps = np.abs(di) + np.abs(dj)
-    
-    # compute slope of the section straight line segment
-    if idir != 0:
-        slope = dj / di
-        vertical = False
-    else:
-        vertical = True
         
-    # iterate through the broken line segments until we reach end of section
+    # iterate through the grid path steps until we reach end of section
+    ct = 0 # grid path step counter
+
+    print((i1, j1), (i2, j2))
     while (i%nx != i2) or (j != j2):
         # safety precaution, exit after N iterations
-        if ct > Nsteps:
+        if ct > 1000:
             raise RuntimeError(f"Should have reached the endpoint by now: {ct}/{Nsteps} steps.")
-        ct += 1
 
-        # get 2 possible next points
-        inext = i + idir
-        jnext = j + jdir
-
-        # increment prediction along shortest path (straight line)
-        if vertical:
-            ipred, jpred = inext, jnext
+        if j!=ny-1:
+            j_up, i_up = j+1, i%nx
         else:
-            ipred = i1 + di * ct/Nsteps
-            jpred = j1 + dj * ct/Nsteps
-
-        # compute squared distances from predicted j to j and jnext
-        di_pred = ((inext - ipred)**2 + (j     - jpred)**2)
-        dj_pred = ((i     - ipred)**2 + (jnext - jpred)**2)
-
-        # increment direction that ends up closer to predicted point along shorted path
-        if np.isclose(dj_pred, di_pred):
-            if idir == 1:
-                i = inext
-            else:
-                j = jnext
-        elif dj_pred < di_pred:
-            j = jnext
-        elif dj_pred > di_pred:
-            i = inext
+            j_up = j
+            i_up = (nx-1) - (i%nx)
+            print((i,j), (i_up, j_up))
+            
+        neighbors = [
+            (j, (i+1)%nx),
+            (j, (i-1)%nx),
+            (j-1, i%nx),
+            (j_up, i_up)
+        ]
+        
+        shortest = np.inf
+        d_steps = []
+        for (_j, _i) in neighbors:
+            d_step = distance_on_unit_sphere(
+                gridlon[j,i],
+                gridlat[j,i],
+                gridlon[_j,_i],
+                gridlat[_j,_i]
+            )
+            d_steps.append(d_step)
+        
+        for (_j, _i) in neighbors:
+            lon_step, lat_step = arc_path(
+                gridlon[j,i],
+                gridlat[j,i],
+                gridlon[_j,_i],
+                gridlat[_j,_i],
+                d_total/d_step
+            )
+            d = distance_on_unit_sphere(
+                lon_stop,
+                lat_stop,
+                lon_step,
+                lat_step
+            )
+            print(d)
+            if d < shortest:
+                j_next, i_next = _j, _i
+                shortest = d
+                
+        print((i_next, j_next), "\n")
+        
+        j = j_next
+        i = i_next
+        
+        j_last, i_last = j,i
 
         # add new point to list
-        iseg.append(i%nx)
+        iseg.append(i)
         jseg.append(j)
+        
+        ct+=1
 
     # create lat/lon vectors from i,j pairs
     lonseg = []
@@ -294,38 +310,67 @@ def find_closest_grid_point(lon, lat, gridlon, gridlat):
         gridlon = gridlon.values
     if isinstance(gridlat, xr.core.dataarray.DataArray):
         gridlat = gridlat.values
-    dist = distance_on_unit_sphere(lat, lon, gridlat, gridlon)
+    dist = distance_on_unit_sphere(lon, lat, gridlon, gridlat)
     jclose, iclose = np.unravel_index(dist.argmin(), gridlon.shape)
     return iclose, jclose
 
-def distance_on_unit_sphere(lat1, lon1, lat2, lon2, method="law of cosines", R=6.371e6):
-
-    if method=="law of cosines":
-        # phi = 90 - latitude
-        phi1 = np.deg2rad(90.0 - lat1)
-        phi2 = np.deg2rad(90.0 - lat2)
-
-        # theta = longitude
-        theta1 = np.deg2rad(lon1)
-        theta2 = np.deg2rad(lon2)
-        # Compute spherical distance from spherical coordinates.
-        # For two locations in spherical coordinates
-        # (1, theta, phi) and (1, theta, phi)
-        # cosine( arc length ) =
-        #    sin phi sin phi' cos(theta-theta') + cos phi cos phi'
-        # distance = rho * arc length
-        cos = np.sin(phi1) * np.sin(phi2) * np.cos(theta1 - theta2) + np.cos(phi1) * np.cos(
-            phi2
-        )
-        arc = np.arccos(cos)/2.
-
-    if method=="haversine":
-        lon1, lat1, lon2, lat2 = np.deg2rad(lon1), np.deg2rad(lat1), np.deg2rad(lon2), np.deg2rad(lat2)
-        dlon = lon2 - lon1
-        dlat = lat2 - lat1
-        a = np.sin(dlat / 2.)**2 + np.cos(lat1)*np.cos(lat2)*np.sin(dlon / 2)**2
-        arc = np.arcsin(np.sqrt(a))
+def distance_on_unit_sphere(lon1, lat1, lon2, lat2, method="vincenty", R=6.371e6):
     
+    # phi = latitude
+    phi1 = np.deg2rad(lat1)
+    phi2 = np.deg2rad(lat2)
+    dphi = np.abs(phi2-phi1)
+    
+    # lam = longitude
+    lam1 = np.deg2rad(lon1)
+    lam2 = np.deg2rad(lon2)
+    dlam = np.abs(lam2-lam1)
+    
+    if method=="vincenty":
+        numerator = np.sqrt(
+            (np.cos(phi2)*np.sin(dlam))**2 +
+            (np.cos(phi1)*np.sin(phi2) - np.sin(phi1)*np.cos(phi2)*np.cos(dlam))**2
+        )
+        denominator = np.sin(phi1)*np.sin(phi2) + np.cos(phi1)*np.cos(phi2)*np.cos(dlam)
+        arc = np.arctan2(numerator, denominator)
+        
+    elif method=="haversine":
+        arc = 2*np.arcsin(np.sqrt(
+            np.sin(dphi/2.)**2 + (1. - np.sin(dphi/2.)**2 - np.sin((phi1+phi2)/2.)**2)*np.sin(dlam/2.)**2
+        ))
+    
+        
+    elif method=="law of cosines":
+        arc = np.arccos(
+            np.sin(phi1)*np.sin(phi2) + np.cos(phi1)*np.cos(phi2)*np.cos(dlam)
+        )
+
     # Remember to multiply arc by the radius of the earth
     # in your favorite set of units to get length.
-    return 2. * R * arc
+    return R * arc
+
+def arc_path_range(lon1, lat1, lon2, lat2, N, start=0., stop=1.):
+    r = np.linspace(start, stop, N)
+    return arc_path(lon1, lat1, lon2, lat2, r)
+    
+def arc_path(lon1, lat1, lon2, lat2, r):
+    r = np.clip(r, 0., 1.)
+    
+    lam1 = np.deg2rad(lon1)
+    lam2 = np.deg2rad(lon2)
+    
+    phi1 = np.deg2rad(lat1)
+    phi2 = np.deg2rad(lat2)
+    
+    arc = distance_on_unit_sphere(lam1, lam2, phi1, phi2, R=1.)
+    
+    A = np.sin((1-r)*arc)/np.sin(arc)
+    B = np.sin(r*arc)/np.sin(arc)
+    x = A*np.cos(phi1)*np.cos(lam1) + B*np.cos(phi2)*np.cos(lam2)
+    y = A*np.cos(phi1)*np.sin(lam1) + B*np.cos(phi2)*np.sin(lam2)
+    z = A*np.sin(phi1) + B*np.sin(phi2)
+
+    lons = np.rad2deg(np.arctan2(y, x))
+    lats = np.rad2deg(np.arctan2(z, np.sqrt(x**2 + y**2)))
+    
+    return lons, lats
