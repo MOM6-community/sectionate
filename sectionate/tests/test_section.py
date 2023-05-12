@@ -12,16 +12,18 @@ def test_distance_on_unit_sphere():
     from sectionate.section import distance_on_unit_sphere
 
     # test of few points with unit radius
-    d = distance_on_unit_sphere(0, 0, 0, 360, R=1.)
-    assert np.equal(d, 0)
-    d = distance_on_unit_sphere(90, 0, -90, 0, R=1., method="haversine")
-    assert np.equal(d, np.pi)
-    d = distance_on_unit_sphere(0, 0, 0, 180, R=1.)
-    assert np.equal(d, np.pi)
-    d = distance_on_unit_sphere(0, 180, 0, 90, R=1.)
-    assert np.equal(d, np.pi / 2)
-    d = distance_on_unit_sphere(90, 180, 0, 180, R=1.)
-    assert np.equal(d, np.pi / 2)
+    d = distance_on_unit_sphere(0, 0, 1.e-20, 0, R=1.)
+    assert np.isclose(d, 0., atol=1.e-14)
+    d = distance_on_unit_sphere(0, 0, 360, 0, R=1.)
+    assert np.isclose(d, 0., atol=1.e-14)
+    d = distance_on_unit_sphere(0, 90, 0, -90, R=1.)
+    assert np.isclose(d, np.pi, atol=1.e-14)
+    d = distance_on_unit_sphere(0, 0, 180, 0, R=1.)
+    assert np.isclose(d, np.pi, atol=1.e-14)
+    d = distance_on_unit_sphere(180, 0, 90, 0, R=1.)
+    assert np.isclose(d, np.pi/2, atol=1.e-14)
+    d = distance_on_unit_sphere(180, 90, 180, 0, R=1.)
+    assert np.isclose(d, np.pi/2, atol=1.e-14)
 
 
 def test_find_closest_grid_point():
