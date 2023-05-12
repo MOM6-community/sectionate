@@ -278,6 +278,7 @@ def is_section_counterclockwise(lons, lats, geometry="spherical"):
     return signed_area < 0.
 
 def stereographic_projection(lons, lats):
+    lats = np.clip(lats, -90+1.e-4, 90-1.e-4)
     varphi = np.deg2rad(-lats+90.)
     theta = np.deg2rad(lons)
     
