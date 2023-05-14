@@ -1,0 +1,24 @@
+[project]
+name = "sectionate"
+version = "0.0.1"
+authors = [
+    {name="Raphael Dussin", email="raphael.dussin@gmail.com"},
+    {name="Henri F. Drake", email="hfdrake@uci.edu"}
+]
+description = ("A package to create grid-consistent sections in ocean model outputs.")
+readme = "README.md"
+requires-python = ">=3.8"
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "License :: OSI Approved :: GPLv3",
+    "Operating System :: OS Independent",
+]
+
+[project.urls]
+"Homepage" = "https://github.com/raphaeldussin/sectionate"
+"Bugs/Issues/Features" = "https://github.com/raphaeldussin/sectionate/issues"
+"Sibling package" = "https://github.com/hdrake/regionate"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"

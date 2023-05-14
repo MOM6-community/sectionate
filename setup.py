@@ -10,5 +10,8 @@ setuptools.setup(
     license="GPLv3",
     keywords="",
     url="https://github.com/raphaeldussin/sectionate",
-    packages=['sectionate']
+    packages=['sectionate'],
+    classifiers=[
+        'Development Status :: 3 - Alpha',
+    ],
 )
