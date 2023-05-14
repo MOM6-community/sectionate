@@ -140,7 +140,7 @@ def convergent_transport(
     if (layer is not None) and (interface is not None):
         if layer.replace("l", "i") != interface:
             raise ValueError("Inconsistent layer and interface grid variables!")
-
+            
     uvindices = uvindices_from_qindices(grid, isec, jsec)
     uvcoords = uvcoords_from_qindices(grid, isec, jsec)
     
@@ -168,6 +168,7 @@ def convergent_transport(
     mask_types = (np.ndarray, dask.array.Array, xr.DataArray)
     if isinstance(positive_in, mask_types):
         positive_in = is_mask_inside(positive_in, grid, sect)
+        
     else:
         if geometry=="cartesian" and grid.axes['X']._periodic is not False:
             raise ValueError("Periodic cartesian domains are not yet supported!")
@@ -195,12 +196,15 @@ def convergent_transport(
         coords["Y"]["q"]: sect["j"]
     }
     
+    u = grid._ds[utr]
+    v = grid._ds[vtr]
+    
     conv_umo_masked = (
-        grid._ds[utr].isel(usel).fillna(0.)
+        u.isel(usel).fillna(0.)
         *sect["Usign"]*sect["Umask"]
     )
     conv_vmo_masked = (
-        grid._ds[vtr].isel(vsel).fillna(0.)
+        v.isel(vsel).fillna(0.)
         *sect["Vsign"]*sect["Vmask"]
     )
     conv_transport = xr.DataArray(
@@ -278,11 +282,11 @@ def is_section_counterclockwise(lons, lats, geometry="spherical"):
     return signed_area < 0.
 
 def stereographic_projection(lons, lats):
-    lats = np.clip(lats, -90+1.e-4, 90-1.e-4)
+    lats = np.clip(lats, -90. +1.e-3, 90. -1.e-3)
     varphi = np.deg2rad(-lats+90.)
     theta = np.deg2rad(lons)
     
-    R = np.sin(varphi)/(1. - np.cos(varphi))
+    R = np.sin(varphi)/(1. - np.clip(np.cos(varphi), -1. +1.e-14, 1. -1.e-14))
     Theta = -theta
     
     X, Y = R*np.cos(Theta), R*np.sin(Theta)

@@ -15,8 +15,6 @@ dependencies:
   - pip
   - pydap
   - pytest
-  - regionmask
-  - seawater
   - scipy
   - xarray
   - xgcm

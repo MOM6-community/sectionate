@@ -4,7 +4,7 @@ import xarray as xr
 
 from .gridutils import get_geo_corners, check_symmetric
 
-def grid_section(grid, lons, lats, topology="MOM6-tripolar"):
+def grid_section(grid, lons, lats, topology="cartesian"):
     geocorners = get_geo_corners(grid)
     return create_section_composite(
         geocorners["X"],
@@ -23,7 +23,7 @@ def create_section_composite(
     lats,
     symmetric,
     periodic=("X"),
-    topology="MOM6-tripolar"
+    topology="cartesian"
     ):
     """create section from list of segments
 
@@ -83,7 +83,7 @@ def create_section_composite(
 
     return isect.astype(np.int64), jsect.astype(np.int64), lonsect, latsect
 
-def create_section(gridlon, gridlat, lonstart, latstart, lonend, latend, symmetric, periodic=("X"), topology="MOM6-tripolar"):
+def create_section(gridlon, gridlat, lonstart, latstart, lonend, latend, symmetric, periodic=("X"), topology="cartesian"):
     """ replacement function for the old create_section """
 
     if symmetric and periodic==("X"):
@@ -107,7 +107,7 @@ def create_section(gridlon, gridlat, lonstart, latstart, lonend, latend, symmetr
         latseg
     )
 
-def infer_grid_path_from_geo(lonstart, latstart, lonend, latend, gridlon, gridlat, periodic=("X"), topology="MOM6-tripolar"):
+def infer_grid_path_from_geo(lonstart, latstart, lonend, latend, gridlon, gridlat, periodic=("X"), topology="cartesian"):
     """find the grid path joining (lonstart, latstart) and (lonend, latend) pairs
 
     PARAMETERS:
@@ -162,7 +162,7 @@ def infer_grid_path_from_geo(lonstart, latstart, lonend, latend, gridlon, gridla
     return iseg, jseg, lonseg, latseg
 
 
-def infer_grid_path(i1, j1, i2, j2, gridlon, gridlat, periodic=("X"), topology="MOM6-tripolar"):
+def infer_grid_path(i1, j1, i2, j2, gridlon, gridlat, periodic=("X"), topology="cartesian"):
     """find the grid path joining (i1, j1) and (i2, j2) pairs
 
     PARAMETERS:
@@ -242,7 +242,7 @@ def infer_grid_path(i1, j1, i2, j2, gridlon, gridlat, periodic=("X"), topology="
             left = (j, np.clip(i-1, 0, nx-1))
         down = (np.clip(j-1, 0, ny-1), i)
         
-        if topology=="MOM6-tripolar":
+        if topology=="MOM-tripolar":
             if j!=ny-1:
                 up = (j+1, i%nx)
             else:
@@ -251,10 +251,9 @@ def infer_grid_path(i1, j1, i2, j2, gridlon, gridlat, periodic=("X"), topology="
         elif topology=="cartesian":
                 up = (np.clip(j+1, 0, ny-1), i)
         else:
-            raise ValueError("Only 'cartesian' and 'MOM6-tripolar' grid topologies are currently supported.")
+            raise ValueError("Only 'cartesian' and 'MOM-tripolar' grid topologies are currently supported.")
         
         neighbors = [right, left, down, up]
-        #print((j, i), " -> ", neighbors)
         
         smallest_angle = np.inf
         d_list = []
@@ -291,7 +290,12 @@ def infer_grid_path(i1, j1, i2, j2, gridlon, gridlat, periodic=("X"), topology="
         # pick the one that is the closest and hope that will put us on the right path.
         # Maybe it is the wrong choice.
         if smallest_angle == np.inf:
-            (j_next, i_next) = neighbors[np.argmin(d_list)]
+            if (j_prev, i_prev) in neighbors:
+                idx = neighbors.index((j_prev, i_prev))
+                del neighbors[idx]
+                del d_list[idx]
+            
+            (j_next, i_next ) = neighbors[np.argmin(d_list)]
 
         j_prev, i_prev = j,i
         
