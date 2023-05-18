@@ -302,7 +302,7 @@ def infer_grid_path(i1, j1, i2, j2, gridlon, gridlat, periodic=("X"), topology="
                 lat2
             )
         
-        if d_current == 0.:
+        if d_current < 1.e-12:
             break
         
         if periodic==("X"):
