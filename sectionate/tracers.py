@@ -14,31 +14,29 @@ def extract_tracer(
     grid,
     isec,
     jsec,
-    section_coord="sect"
+    sect_coord="sect"
     ):
-    """Extract tracer data on cell thickness grid along the grid path
+    """
+    Extract tracer data on cell thickness grid along the grid path
     of (isec, jsec) for plotting.
 
     PARAMETERS:
     -----------
-
-    da: xarray.DataArray
-        data to sample
+    name:
+        name of variable in `grid._ds`
+    grid: xgcm.Grid
+        grid describing model and containing data
     isec: int
-        indices of i-points of broken line
+        vorticity point indices along 'X' dimension 
     jsec: int
-        indices of j-points of broken line
-    xdim: str
-        name of the x-dimension of tracer array. Defaults to 'xh'.
-    ydim: str
-        name of the y-dimension of tracer array. Defaults to 'yh'.
-    section_coord: str
-        name of the produced axis for along section data. Defaults to 'sect'.
+        vorticity point indices along 'Y' dimension
+    sect_coord: str
+        Name of the dimension describing along-section data in the output. Default: 'sect'.
 
     RETURNS:
     --------
 
-    xarray.DataArray with data sampled on U and V points of the section.
+    xarray.DataArray with data interpolated to the U and V points along the section.
     """
     
     da=grid._ds[name]
@@ -49,10 +47,10 @@ def extract_tracer(
     uvindices = uvindices_from_qindices(grid, isec, jsec)
         
     section = xr.Dataset()
-    section["i"] = xr.DataArray(uvindices["i"], dims=section_coord)
-    section["j"] = xr.DataArray(uvindices["j"], dims=section_coord)
-    section["Umask"] = xr.DataArray(uvindices["var"]=="U", dims=section_coord)
-    section["Vmask"] = xr.DataArray(uvindices["var"]=="V", dims=section_coord)
+    section["i"] = xr.DataArray(uvindices["i"], dims=sect_coord)
+    section["j"] = xr.DataArray(uvindices["j"], dims=sect_coord)
+    section["Umask"] = xr.DataArray(uvindices["var"]=="U", dims=sect_coord)
+    section["Vmask"] = xr.DataArray(uvindices["var"]=="V", dims=sect_coord)
 
     usel = {coords["X"]["h"]: np.mod(section["i"]-np.int64(symmetric), da[coords["X"]["h"]].size),
             coords["Y"]["h"]: np.mod(section["j"]                    , da[coords["Y"]["h"]].size)}

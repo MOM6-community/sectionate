@@ -7,8 +7,29 @@ from .gridutils import check_symmetric, coord_dict, get_geo_corners
 from .section import distance_on_unit_sphere
 
 def uvindices_from_qindices(grid, isec, jsec):
-    """From vorticity (q) points given by section, infer u-v points using MOM6 conventions:
-    https://mom6.readthedocs.io/en/main/api/generated/pages/Horizontal_Indexing.html
+    """
+    Find the `grid` indices of the N-1 velocity points defined by the consecutive indices of
+    N vorticity points. Follows MOM6 conventions (https://mom6.readthedocs.io/en/main/api/generated/pages/Horizontal_Indexing.html),
+    automatically checking `grid` metadata to determine whether the grid is symmetric or non-symmetric.
+
+    PARAMETERS:
+    -----------
+    grid: xgcm.Grid
+        Grid object describing ocean model grid and containing data variables
+    isec: int
+        vorticity point indices along 'X' dimension 
+    jsec: int
+        vorticity point indices along 'Y' dimension
+
+    RETURNS:
+    --------
+    uvindices : dict
+        Dictionary containing:
+          - 'var' : 'U' if corresponding to 'X'-direction velocity (usually nominally zonal), 'V' otherwise
+          - 'i' : 'X'-dimension index of appropriate 'U' or 'V' velocity
+          - 'j' : 'Y'-dimension index of appropriate 'U' or 'V' velocity
+          - 'nward' : True if point was passed through while going in positive 'j'-index direction
+          - 'eward' : True if point was passed through while going in positive 'i'-index direction
     """
     nsec = len(isec)
     uvindices = {
@@ -40,6 +61,28 @@ def uvindices_from_qindices(grid, isec, jsec):
     return uvindices
 
 def uvcoords_from_uvindices(grid, uvindices):
+    """
+    Find the (lons,lats) coordinates of the N-1 velocity points defined by `uvindices` (returned by `uvindices_from_qindices`).
+    Assumes the names of longitude and latitude coordinates in `grid` contain the sub-string 'lon' and 'lat', respectively, but
+    otherwise finds the names using `grid` metadata.
+
+    PARAMETERS:
+    -----------
+    grid: xgcm.Grid
+        Grid object describing ocean model grid and containing data variables
+    uvindices : dict
+        Dictionary returned by `sectionate.transports.uvindices_from_qindices`, containing:
+          - 'var' : 'U' if corresponding to 'X'-direction velocity (usually nominally zonal), 'V' otherwise
+          - 'i' : 'X'-dimension index of appropriate 'U' or 'V' velocity
+          - 'j' : 'Y'-dimension index of appropriate 'U' or 'V' velocity
+          - 'nward' : True if point was passed through while going in positive 'j'-index direction
+          - 'eward' : True if point was passed through while going in positive 'i'-index direction
+
+    RETURNS:
+    --------
+    lons : np.ndarray(float)
+    lats : np.ndarray(float)
+    """
     lons, lats = np.zeros(len(uvindices['var'])), np.zeros(len(uvindices['var']))
 
     ds = grid._ds
@@ -117,6 +160,23 @@ def uvcoords_from_uvindices(grid, uvindices):
     return lons, lats
     
 def uvcoords_from_qindices(grid, isec, jsec):
+    """
+    Directly finds coordinates of velocity points from vorticity point indices, wrapping other functions.
+
+    PARAMETERS:
+    -----------
+    grid: xgcm.Grid
+        Grid object describing ocean model grid and containing data variables
+    isec: int
+        vorticity point indices along 'X' dimension 
+    jsec: int
+        vorticity point indices along 'Y' dimension
+
+    RETURNS:
+    --------
+    lons : np.ndarray(float)
+    lats : np.ndarray(float)
+    """
     return uvcoords_from_uvindices(
         grid,
         uvindices_from_qindices(grid, isec, jsec),
@@ -136,6 +196,50 @@ def convergent_transport(
     positive_in=True,
     cell_widths={'U':'dyCu', 'V':'dxCv'},
     ):
+    """
+    Lazily calculates extensive transports normal to a section, with the sign convention of positive into the spherical polygon
+    defined by the section, unless overridden by changing the 'positive_in=True' keyword argument. Supports curvlinear geometries
+    and complicated grid topologies, as long as the grid is *locally* orthogonal (as in MOM6).
+    Lazily broadcasts the calculation in all dimensions except ('X', 'Y').
+
+    PARAMETERS:
+    -----------
+    grid: xgcm.Grid
+        Grid object describing ocean model grid and containing data variables. Must include variables 'utr' and 'vtr' (see kwargs).
+    isec: int
+        Vorticity point indices along 'X' dimension. 
+    jsec: int
+        Vorticity point indices along 'Y' dimension.
+    utr: str
+        Name of 'X'-direction tracer transport
+    vtr: str
+        Name of 'Y'-direction tracer transport
+    layer : str or None
+    interface : str or None
+    outname : str
+        Name of output xr.DataArray variable. Default: "conv_mass_transport".
+    sect_coord: str
+        Name of the dimension describing along-section data in the output. Default: 'sect'.
+    geometry : str
+        Geometry to use to check orientation of the section. Supported geometries are ["cartesian", "spherical"].
+        Default: "spherical".
+    positive_in : bool or xr.DataArray of type bool
+        If True, convergence is defined as 'inwards' with respect to the corresponding 'geometry'.
+        If False, convergence is defined as 'outwards' (equivalently, negative the inward convergence).
+        If a boolean xr.DataArray, get value of positive_in by selecting the value of the mask on the inside
+        of an arbitrary velocity face.
+    cell_widths : dict
+        Values of 'U' and 'V' items in `cell_widths` correspond to the names of the coordinates describing the width of
+        velocity cells. If they are both present in `grid._ds`, accumulate distance along the section and add it to the
+        returned xr.DataArray.
+
+    RETURNS:
+    --------
+    dsout : xr.DataArray
+        Contains the calculated normal transport and the coordinates of the contributing velocity points (`lon`, `lat`),
+        as well as some useful metadata, such as whether each point corresponds to a 'U' or 'V' velocity and whether
+        the sign of the transport had to be flipped to make it point inwards.
+    """
     
     if (layer is not None) and (interface is not None):
         if layer.replace("l", "i") != interface:
@@ -181,7 +285,7 @@ def convergent_transport(
         counterclockwise = is_section_counterclockwise(
             geo_corners['X'].isel(idx).values,
             geo_corners['Y'].isel(idx).values,
-            geometry
+            geometry=geometry
         )
         positive_in = positive_in ^ (not(counterclockwise))
     orient_fact = np.int32(positive_in)*2-1
@@ -263,7 +367,28 @@ def convergent_transport(
     return dsout
 
 def is_section_counterclockwise(lons, lats, geometry="spherical"):
+    """
+    Check if the polygon defined by the consecutive (lons, lats) is `counterclockwise` (with respect to a given
+    `geometry`). Under the hood, it does this by checking whether the signed area (or determinant) of the polygon
+    is negative (counterclockwise) or positive (clockwise). This is only a meaningful calculation if the section
+    is closed, i.e. (lons[-1], lats[-1]) == (lons[0], lats[0]), and therefore defines a polygon.
     
+    For the case `geometry="spherical"`, the periodic nature of the longitude coordinate complicates things;
+    instead of working in spherical coordinates, we use a South-Pole stereographic projection of the surface of the sphere
+    and evaluate the orientation of the projected polygon with respect to the stereographic plane.
+
+    PARAMETERS:
+    -----------
+    lons : np.ndarray(float), in degrees
+    lats : np.ndarray(float), in degrees
+    geometry : str
+        Geometry to use to check orientation of the section. Supported geometries are ["cartesian", "spherical"].
+        Default: "spherical".
+
+    RETURNS:
+    --------
+    counterclockwise : bool
+    """
     if distance_on_unit_sphere(lons[0], lats[0], lons[-1], lats[-1]) > 10.:
         warnings.warn("The orientation of open sections is ambiguous–verify that it matches expectations!")
         lons = np.append(lons, lons[0])
@@ -282,6 +407,19 @@ def is_section_counterclockwise(lons, lats, geometry="spherical"):
     return signed_area < 0.
 
 def stereographic_projection(lons, lats):
+    """
+    Projects longitudes and latitudes onto the South-Polar stereographic plane.
+
+    PARAMETERS:
+    -----------
+    lons : np.ndarray(float), in degrees
+    lats : np.ndarray(float), in degrees
+
+    RETURNS:
+    --------
+    X : np.ndarray(float)
+    Y : np.ndarray(float)
+    """
     lats = np.clip(lats, -90. +1.e-3, 90. -1.e-3)
     varphi = np.deg2rad(-lats+90.)
     theta = np.deg2rad(lons)
@@ -294,6 +432,21 @@ def stereographic_projection(lons, lats):
     return X, Y
 
 def is_mask_inside(mask, grid, sect, idx=0):
+    """
+    Find the `(i,j)` indices of the `grid` tracer-cell point "inside" of the velocity face at index `idx`,
+    and evaluate the value of the `mask` there.
+
+    PARAMETERS:
+    -----------
+    mask : xr.DataArray
+    grid : xgcm.Grid
+    sect : dict
+        Dictionary of uvindices (see `sectionate.transports.uvindices_from_qindices`).
+
+    RETURNS:
+    --------
+    positive_in : bool
+    """
     symmetric = check_symmetric(grid)
     coords = coord_dict(grid)
     if sect['var'][idx]=="U":
