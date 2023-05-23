@@ -74,4 +74,4 @@ def ds_to_grid(ds, z_coord="zstr"):
             **coords,
             **{'Z': {'center': 'rho2_l', 'outer': 'rho2_i'}}
         }
-    return ds, xgcm.Grid(ds, coords=coords, periodic=("X"))
+    return ds, xgcm.Grid(ds, coords=coords, periodic=["X"])

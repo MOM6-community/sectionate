@@ -75,7 +75,7 @@ def initialize_minimal_spherical_grid():
         'X': {'outer': 'xq', 'center': 'xh'},
         'Y': {'outer': 'yq', 'center': 'yh'}
     }
-    grid = xgcm.Grid(ds, coords=coords, periodic=("X"))
+    grid = xgcm.Grid(ds, coords=coords, periodic=["X"])
     return grid
     
 def test_convergent_transport_convention():

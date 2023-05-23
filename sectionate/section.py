@@ -34,7 +34,7 @@ def grid_section(grid, lons, lats, topology="cartesian"):
         lons,
         lats,
         check_symmetric(grid),
-        periodic=(grid.axes['X']._periodic),
+        periodic=[ax for ax in grid.axes if grid.axes[ax]._periodic],
         topology=topology
     )
 
@@ -44,7 +44,7 @@ def create_section_composite(
     lons,
     lats,
     symmetric,
-    periodic=("X"),
+    periodic=["X"],
     topology="cartesian"
     ):
     """
@@ -111,7 +111,7 @@ def create_section_composite(
 
     return isect.astype(np.int64), jsect.astype(np.int64), lonsect, latsect
 
-def create_section(gridlon, gridlat, lonstart, latstart, lonend, latend, symmetric, periodic=("X"), topology="cartesian"):
+def create_section(gridlon, gridlat, lonstart, latstart, lonend, latend, symmetric, periodic=["X"], topology="cartesian"):
     """
     Compute a section segment along velocity faces, as defined by coordinates of vorticity points (gridlon, gridlat),
     that most closely approximates the geodesic path between points (lonstart, latstart) and (lonend, latend).
@@ -147,7 +147,7 @@ def create_section(gridlon, gridlat, lonstart, latstart, lonend, latend, symmetr
         (lonsect, latsect) are the corresponding longitude and latitudes.
     """
 
-    if symmetric and periodic==("X"):
+    if symmetric and periodic==["X"]:
         gridlon=gridlon[:,:-1]
         gridlat=gridlat[:,:-1]
 
@@ -168,7 +168,7 @@ def create_section(gridlon, gridlat, lonstart, latstart, lonend, latend, symmetr
         latseg
     )
 
-def infer_grid_path_from_geo(lonstart, latstart, lonend, latend, gridlon, gridlat, periodic=("X"), topology="cartesian"):
+def infer_grid_path_from_geo(lonstart, latstart, lonend, latend, gridlon, gridlat, periodic=["X"], topology="cartesian"):
     """
     Find the grid indices (and coordinates) of vorticity points that most closely approximates
     the geodesic path between points (lonstart, latstart) and (lonend, latend).
@@ -188,8 +188,8 @@ def infer_grid_path_from_geo(lonstart, latstart, lonend, latend, gridlon, gridla
         2d array of longitude, in degrees
     gridlat: np.ndarray
         2d array of latitude, in degrees
-    periodic: ("X") or False
-        Default: ("X"). Set to False if using a non-periodic regional domain. For "periodic=False", the algorithm will
+    periodic: ["X"] or False
+        Default: ["X"]. Set to False if using a non-periodic regional domain. For "periodic=False", the algorithm will
         break if shortest paths between two points in the domain leaves the domain!
     topology: str
         Default: 'cartesian'. Currently only supports the following options: ['cartesian', 'MOM-tripolar'].
@@ -228,7 +228,7 @@ def infer_grid_path_from_geo(lonstart, latstart, lonend, latend, gridlon, gridla
     return iseg, jseg, lonseg, latseg
 
 
-def infer_grid_path(i1, j1, i2, j2, gridlon, gridlat, periodic=("X"), topology="cartesian"):
+def infer_grid_path(i1, j1, i2, j2, gridlon, gridlat, periodic=["X"], topology="cartesian"):
     """
     Find the grid indices (and coordinates) of vorticity points that most closely approximate
     the geodesic path between points (gridlon[j1,i1], gridlat[j1,i1]) and
@@ -305,7 +305,7 @@ def infer_grid_path(i1, j1, i2, j2, gridlon, gridlat, periodic=("X"), topology="
         if d_current < 1.e-12:
             break
         
-        if periodic==("X"):
+        if periodic==["X"]:
             right = (j, (i+1)%nx)
             left = (j, (i-1)%nx)
         else:
