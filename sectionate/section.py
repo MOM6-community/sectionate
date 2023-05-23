@@ -12,7 +12,7 @@ def grid_section(grid, lons, lats, topology="cartesian"):
         lons,
         lats,
         check_symmetric(grid),
-        periodic=(grid.axes['X']._periodic),
+        periodic=[ax for ax in grid.axes if grid.axes[ax]._periodic],
         topology=topology
     )
 
@@ -22,7 +22,7 @@ def create_section_composite(
     lons,
     lats,
     symmetric,
-    periodic=("X"),
+    periodic=["X"],
     topology="cartesian"
     ):
     """create section from list of segments
@@ -83,10 +83,10 @@ def create_section_composite(
 
     return isect.astype(np.int64), jsect.astype(np.int64), lonsect, latsect
 
-def create_section(gridlon, gridlat, lonstart, latstart, lonend, latend, symmetric, periodic=("X"), topology="cartesian"):
+def create_section(gridlon, gridlat, lonstart, latstart, lonend, latend, symmetric, periodic=["X"], topology="cartesian"):
     """ replacement function for the old create_section """
 
-    if symmetric and periodic==("X"):
+    if symmetric and periodic==["X"]:
         gridlon=gridlon[:,:-1]
         gridlat=gridlat[:,:-1]
 
@@ -107,7 +107,7 @@ def create_section(gridlon, gridlat, lonstart, latstart, lonend, latend, symmetr
         latseg
     )
 
-def infer_grid_path_from_geo(lonstart, latstart, lonend, latend, gridlon, gridlat, periodic=("X"), topology="cartesian"):
+def infer_grid_path_from_geo(lonstart, latstart, lonend, latend, gridlon, gridlat, periodic=["X"], topology="cartesian"):
     """find the grid path joining (lonstart, latstart) and (lonend, latend) pairs
 
     PARAMETERS:
@@ -162,7 +162,7 @@ def infer_grid_path_from_geo(lonstart, latstart, lonend, latend, gridlon, gridla
     return iseg, jseg, lonseg, latseg
 
 
-def infer_grid_path(i1, j1, i2, j2, gridlon, gridlat, periodic=("X"), topology="cartesian"):
+def infer_grid_path(i1, j1, i2, j2, gridlon, gridlat, periodic=["X"], topology="cartesian"):
     """find the grid path joining (i1, j1) and (i2, j2) pairs
 
     PARAMETERS:
@@ -219,6 +219,7 @@ def infer_grid_path(i1, j1, i2, j2, gridlon, gridlat, periodic=("X"), topology="
     # Second, throw away any that are further from the destination than the current point
     # Third, go to the valid neighbor that has the smallest angle from the arc path between the
     # start and end points (the shortest geodesic path)
+    j_prev, i_prev = j,i
     while (i%nx != i2) or (j != j2):
         # safety precaution: exit after taking enough steps to have crossed the entire model grid
         if ct > (nx+ny+1):
@@ -231,10 +232,10 @@ def infer_grid_path(i1, j1, i2, j2, gridlon, gridlat, periodic=("X"), topology="
                 lat2
             )
         
-        if d_current == 0.:
+        if d_current < 1.e-9:
             break
         
-        if periodic==("X"):
+        if periodic==["X"]:
             right = (j, (i+1)%nx)
             left = (j, (i-1)%nx)
         else:
