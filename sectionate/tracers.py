@@ -54,20 +54,22 @@ def extract_tracer(
     section["Umask"] = xr.DataArray(uvindices["var"]=="U", dims=section_coord)
     section["Vmask"] = xr.DataArray(uvindices["var"]=="V", dims=section_coord)
 
-    usel = {coords["X"]["h"]: np.mod(section["i"]-np.int64(symmetric), da[coords["X"]["h"]].size),
-            coords["Y"]["h"]: np.mod(section["j"]                    , da[coords["Y"]["h"]].size)}
-    usel_next = {coords["X"]["h"]: np.mod(section["i"]+1-np.int64(symmetric), da[coords["X"]["h"]].size),
-                 coords["Y"]["h"]: np.mod(section["j"]                      , da[coords["Y"]["h"]].size)}
+    usel_left  = {coords["X"]["h"]: np.mod(section["i"]-np.int64(symmetric), da[coords["X"]["h"]].size),
+                  coords["Y"]["h"]: np.mod(section["j"]                    , da[coords["Y"]["h"]].size)}
+    usel_right = {coords["X"]["h"]: np.mod(section["i"]+1-np.int64(symmetric), da[coords["X"]["h"]].size),
+                  coords["Y"]["h"]: np.mod(section["j"]                      , da[coords["Y"]["h"]].size)}
 
-    vsel = {coords["X"]["h"]: np.mod(section["i"]                    , da[coords["X"]["h"]].size),
-            coords["Y"]["h"]: np.mod(section["j"]-np.int64(symmetric), da[coords["Y"]["h"]].size)}
-    vsel_next = {coords["X"]["h"]: np.mod(section["i"]                      , da[coords["X"]["h"]].size),
-                 coords["Y"]["h"]: np.mod(section["j"]+1-np.int64(symmetric), da[coords["Y"]["h"]].size)}
+    vsel_left  = {coords["X"]["h"]: np.mod(section["i"]                    , da[coords["X"]["h"]].size),
+                  coords["Y"]["h"]: np.mod(section["j"]-np.int64(symmetric), da[coords["Y"]["h"]].size)}
+    vsel_right = {coords["X"]["h"]: np.mod(section["i"]                      , da[coords["X"]["h"]].size),
+                  coords["Y"]["h"]: np.mod(section["j"]+1-np.int64(symmetric), da[coords["Y"]["h"]].size)}
 
-    tracer = (
-         ( 0.5*(da.isel(usel) + da.isel(usel_next)).fillna(0.) * section["Umask"])
-        +( 0.5*(da.isel(vsel) + da.isel(vsel_next)).fillna(0.) * section["Vmask"])
-    )
+    tracer = sum([
+        xr.where(~np.isnan(da.isel(usel_right)), 0.5*da.isel(usel_left),  da.isel(usel_left) ).fillna(0.) * section["Umask"],
+        xr.where(~np.isnan(da.isel(usel_left )), 0.5*da.isel(usel_right), da.isel(usel_right)).fillna(0.) * section["Umask"],
+        xr.where(~np.isnan(da.isel(vsel_right)), 0.5*da.isel(vsel_left),  da.isel(vsel_left) ).fillna(0.) * section["Vmask"],
+        xr.where(~np.isnan(da.isel(vsel_left )), 0.5*da.isel(vsel_right), da.isel(vsel_right)).fillna(0.) * section["Vmask"],
+    ])
     tracer = tracer.where(tracer!=0., np.nan)
     tracer.name = da.name
     tracer.attrs = da.attrs
