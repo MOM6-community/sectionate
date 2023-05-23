@@ -1,4 +1,18 @@
 def get_geo_corners(grid):
+    """
+    Find longitude and latitude coordinates from grid dataset, assuming the coordinate
+    names contain the sub-strings "lon" and "lat", respectively.
+
+    Parameters
+    ----------
+    grid: xgcm.Grid
+        Contains information about ocean model grid discretization, e.g. coordinates and metrics.
+        
+    Returns
+    -------
+    dict
+        Dictionary containing names of longitude and latitude coordinates.
+    """
     dims = {}
     for axis in ["X", "Y"]:
         if "outer" in grid.axes[axis].coords:
@@ -24,6 +38,20 @@ def get_geo_corners(grid):
     }
     
 def coord_dict(grid):
+    """
+    Find names of "X" and "Y" dimension variables from grid dataset.
+
+    Parameters
+    ----------
+    grid: xgcm.Grid
+        Contains information about ocean model grid discretization, e.g. coordinates and metrics.
+        
+    Returns
+    -------
+    dict
+        Dictionary containing names of "X" and "Y" dimension variables, at both cell 'center' position
+        and either 'outer' or 'right' position. ('left' position not yet supported.)
+    """
     if check_symmetric(grid):
         q_pos = "outer"
     else:
@@ -39,11 +67,29 @@ def coord_dict(grid):
     }
     
 def check_symmetric(grid):
-    x_sym = "outer" in grid.axes['X'].coords
-    y_sym = "outer" in grid.axes['Y'].coords
-    if x_sym and y_sym:
+    """
+    Check whether the horizontal ocean model grid is symmetric or not, according to MOM6 conventions.
+    Symmetric C-grids have tracers on (M,N) 'center' positions and vorticity on (M+1, N+1) 'outer' positions.
+    Non-symmetric C-grids instead have vorticity on (M,N) 'right' positions.
+
+    Parameters
+    ----------
+    grid: xgcm.Grid
+        Contains information about ocean model grid discretization, e.g. coordinates and metrics.
+        
+    Returns
+    -------
+    symmetric : bool
+        True if symmetric; False if non-symmetric.
+        
+    """
+    pos_dict = {
+        p : ((p in grid.axes['X'].coords) and (p in grid.axes['Y'].coords))
+        for p in ["outer", "right"]
+    }
+    if pos_dict["outer"]:
         return True
-    elif not(x_sym) and not(y_sym):
+    elif pos_dict["right"]:
         return False
     else:
         raise ValueError("Horizontal grid axes ('X', 'Y') must be either both symmetric or both non-symmetric (by MOM6 conventions).")

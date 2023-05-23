@@ -5,6 +5,28 @@ import xarray as xr
 from .gridutils import get_geo_corners, check_symmetric
 
 def grid_section(grid, lons, lats, topology="cartesian"):
+    """
+    Compute composite section along model `grid` velocity faces that approximates geodesic paths
+    between consecutive points defined by (lons, lats).
+
+    Parameters
+    ----------
+    grid: xgcm.Grid
+        Object describing the geometry of the ocean model grid, including metadata about variable names for
+        the staggered C-grid dimensions and c oordinates.
+    lons: list or np.ndarray
+        Longitudes, in degrees, of consecutive vertices defining a piece-wise geodesic section.
+    lats: list or np.ndarray
+        Latitudes, in degrees (in range [-90, 90]), of consecutive vertices defining a piece-wise geodesic section.
+    topology: str
+        Default: 'cartesian'. Currently only supports the following options: ['cartesian', 'MOM-tripolar'].
+        
+    Returns
+    -------
+    isect, jsect, lonsect, latsect: `np.ndarray` of types (int, int, float, float) 
+        (isect, jsect) correspond to indices of vorticity points that define velocity faces.
+        (lonsect, latsect) are the corresponding longitude and latitudes.
+    """
     geocorners = get_geo_corners(grid)
     return create_section_composite(
         geocorners["X"],
@@ -12,7 +34,7 @@ def grid_section(grid, lons, lats, topology="cartesian"):
         lons,
         lats,
         check_symmetric(grid),
-        periodic=(grid.axes['X']._periodic),
+        periodic=[ax for ax in grid.axes if grid.axes[ax]._periodic],
         topology=topology
     )
 
@@ -22,32 +44,38 @@ def create_section_composite(
     lons,
     lats,
     symmetric,
-    periodic=("X"),
+    periodic=["X"],
     topology="cartesian"
     ):
-    """create section from list of segments
+    """
+    Compute composite section along velocity faces, as defined by coordinates of vorticity points (gridlon, gridlat),
+    that most closely approximates geodesic paths between consecutive points defined by (lons, lats).
 
     PARAMETERS:
     -----------
 
     gridlon: np.ndarray
-        2d array of longitude
+        2d array of longitude (with dimensions ('Y', 'X')), in degrees
     gridlat: np.ndarray
-        2d array of latitude
+        2d array of latitude (with dimensions ('Y', 'X')), in degrees
     lons: list of float
-        longitude of section starting, intermediate and end points
+        longitude of section starting, intermediate and end points, in degrees
     lats: list of float
-        latitude of section starting, intermediate and end points
-
+        latitude of section starting, intermediate and end points, in degrees
+    symmetric: bool
+        True if symmetric (vorticity on "outer" positions); False if non-symmetric (assuming "right" positions).
+    periodic: ("X") or False
+        Default: ("X"). Set to False if using a non-periodic regional domain. For "periodic=False", the algorithm will
+        break if shortest paths between two points in the domain leaves the domain!
+    topology: str
+        Default: 'cartesian'. Currently only supports the following options: ['cartesian', 'MOM-tripolar'].
 
     RETURNS:
     -------
 
-    isect, jsect: list of int
-        list of (i,j) pairs for section
-    lonsect, latsect: list of float
-        corresponding longitude and latitude for isect, jsect
-
+    isect, jsect, lonsect, latsect: `np.ndarray` of types (int, int, float, float) 
+        (isect, jsect) correspond to indices of vorticity points that define velocity faces.
+        (lonsect, latsect) are the corresponding longitude and latitudes.
     """
 
     isect = np.array([], dtype=np.int64)
@@ -83,10 +111,43 @@ def create_section_composite(
 
     return isect.astype(np.int64), jsect.astype(np.int64), lonsect, latsect
 
-def create_section(gridlon, gridlat, lonstart, latstart, lonend, latend, symmetric, periodic=("X"), topology="cartesian"):
-    """ replacement function for the old create_section """
+def create_section(gridlon, gridlat, lonstart, latstart, lonend, latend, symmetric, periodic=["X"], topology="cartesian"):
+    """
+    Compute a section segment along velocity faces, as defined by coordinates of vorticity points (gridlon, gridlat),
+    that most closely approximates the geodesic path between points (lonstart, latstart) and (lonend, latend).
 
-    if symmetric and periodic==("X"):
+    PARAMETERS:
+    -----------
+
+    gridlon: np.ndarray
+        2d array of longitude (with dimensions ('Y', 'X')), in degrees
+    gridlat: np.ndarray
+        2d array of latitude (with dimensions ('Y', 'X')), in degrees
+    lonstart: float
+        longitude of starting point, in degrees
+    lonend: float
+        longitude of end point, in degrees
+    latstart: float
+        latitude of starting point, in degrees
+    latend: float
+        latitude of end point, in degrees
+    symmetric: bool
+        True if symmetric (vorticity on "outer" positions); False if non-symmetric (assuming "right" positions).
+    periodic: ("X") or False
+        Default: ("X"). Set to False if using a non-periodic regional domain. For "periodic=False", the algorithm will
+        break if shortest paths between two points in the domain leaves the domain!
+    topology: str
+        Default: 'cartesian'. Currently only supports the following options: ['cartesian', 'MOM-tripolar'].
+
+    RETURNS:
+    -------
+
+    isect, jsect, lonsect, latsect: `np.ndarray` of types (int, int, float, float) 
+        (isect, jsect) correspond to indices of vorticity points that define velocity faces.
+        (lonsect, latsect) are the corresponding longitude and latitudes.
+    """
+
+    if symmetric and periodic==["X"]:
         gridlon=gridlon[:,:-1]
         gridlat=gridlat[:,:-1]
 
@@ -107,33 +168,38 @@ def create_section(gridlon, gridlat, lonstart, latstart, lonend, latend, symmetr
         latseg
     )
 
-def infer_grid_path_from_geo(lonstart, latstart, lonend, latend, gridlon, gridlat, periodic=("X"), topology="cartesian"):
-    """find the grid path joining (lonstart, latstart) and (lonend, latend) pairs
+def infer_grid_path_from_geo(lonstart, latstart, lonend, latend, gridlon, gridlat, periodic=["X"], topology="cartesian"):
+    """
+    Find the grid indices (and coordinates) of vorticity points that most closely approximates
+    the geodesic path between points (lonstart, latstart) and (lonend, latend).
 
     PARAMETERS:
     -----------
 
     lonstart: float
-        longitude of section starting point
+        longitude of section starting point, in degrees
     latstart: float
-        latitude of section starting point
+        latitude of section starting point, in degrees
     lonend: float
-        longitude of section end point
+        longitude of section end point, in degrees
     latend: float
-        latitude of section end point
-
+        latitude of section end point, in degrees
     gridlon: np.ndarray
-        2d array of longitude
+        2d array of longitude, in degrees
     gridlat: np.ndarray
-        2d array of latitude
+        2d array of latitude, in degrees
+    periodic: ["X"] or False
+        Default: ["X"]. Set to False if using a non-periodic regional domain. For "periodic=False", the algorithm will
+        break if shortest paths between two points in the domain leaves the domain!
+    topology: str
+        Default: 'cartesian'. Currently only supports the following options: ['cartesian', 'MOM-tripolar'].
 
     RETURNS:
     -------
 
-    iseg, jseg: list of int
-        list of (i,j) pairs bounded by (i1, j1) and (i2, j2)
-    lonseg, latseg: list of float
-        corresponding longitude and latitude for iseg, jseg
+    isect, jsect, lonsect, latsect: `np.ndarray` of types (int, int, float, float) 
+        (isect, jsect) correspond to indices of vorticity points that define velocity faces.
+        (lonsect, latsect) are the corresponding longitude and latitudes.
     """
 
     istart, jstart = find_closest_grid_point(
@@ -162,8 +228,11 @@ def infer_grid_path_from_geo(lonstart, latstart, lonend, latend, gridlon, gridla
     return iseg, jseg, lonseg, latseg
 
 
-def infer_grid_path(i1, j1, i2, j2, gridlon, gridlat, periodic=("X"), topology="cartesian"):
-    """find the grid path joining (i1, j1) and (i2, j2) pairs
+def infer_grid_path(i1, j1, i2, j2, gridlon, gridlat, periodic=["X"], topology="cartesian"):
+    """
+    Find the grid indices (and coordinates) of vorticity points that most closely approximate
+    the geodesic path between points (gridlon[j1,i1], gridlat[j1,i1]) and
+    (gridlon[j2,i2], gridlat[j2,i2]).
 
     PARAMETERS:
     -----------
@@ -176,14 +245,15 @@ def infer_grid_path(i1, j1, i2, j2, gridlon, gridlat, periodic=("X"), topology="
         i-coord of point2
     j2: integer
         j-coord of point2
-
     gridlon: np.ndarray
-        2d array of longitude
+        2d array of longitude, in degrees
     gridlat: np.ndarray
-        2d array of latitude
-
-    nitmax: int
-        max number of iteration allowed
+        2d array of latitude, in degrees
+    periodic: ("X") or False
+        Default: ("X"). Set to False if using a non-periodic regional domain. For "periodic=False", the algorithm will
+        break if shortest paths between two points in the domain leaves the domain!
+    topology: str
+        Default: 'cartesian'. Currently only supports the following options: ['cartesian', 'MOM-tripolar'].
 
     RETURNS:
     -------
@@ -219,6 +289,7 @@ def infer_grid_path(i1, j1, i2, j2, gridlon, gridlat, periodic=("X"), topology="
     # Second, throw away any that are further from the destination than the current point
     # Third, go to the valid neighbor that has the smallest angle from the arc path between the
     # start and end points (the shortest geodesic path)
+    j_prev, i_prev = j,i
     while (i%nx != i2) or (j != j2):
         # safety precaution: exit after taking enough steps to have crossed the entire model grid
         if ct > (nx+ny+1):
@@ -231,10 +302,10 @@ def infer_grid_path(i1, j1, i2, j2, gridlon, gridlat, periodic=("X"), topology="
                 lat2
             )
         
-        if d_current == 0.:
+        if d_current < 1.e-12:
             break
         
-        if periodic==("X"):
+        if periodic==["X"]:
             right = (j, (i+1)%nx)
             left = (j, (i-1)%nx)
         else:
@@ -317,15 +388,16 @@ def infer_grid_path(i1, j1, i2, j2, gridlon, gridlat, periodic=("X"), topology="
 
 
 def find_closest_grid_point(lon, lat, gridlon, gridlat):
-    """find integer indices of closest grid point in grid of coordinates
-    gridlon, gridlat for a given geographical lon/lat.
+    """
+    Find integer indices of closest grid point in grid of coordinates
+    (gridlon, gridlat), for a given point (lon, at).
 
     PARAMETERS:
     -----------
-        lon (float): longitude of point to find
-        lat (float): latitude of point to find
-        gridlon (numpy.ndarray): grid longitudes
-        gridlat (numpy.ndarray): grid latitudes
+        lon (float): longitude of point to find, in degrees
+        lat (float): latitude of point to find, in degrees
+        gridlon (numpy.ndarray): grid longitudes, in degrees
+        gridlat (numpy.ndarray): grid latitudes, in degrees
 
     RETURNS:
     --------
@@ -342,14 +414,40 @@ def find_closest_grid_point(lon, lat, gridlon, gridlat):
     jclose, iclose = np.unravel_index(dist.argmin(), gridlon.shape)
     return iclose, jclose
 
-def distance_on_unit_sphere(lon1, lat1, lon2, lat2, method="vincenty", R=6.371e6):
+def distance_on_unit_sphere(lon1, lat1, lon2, lat2, R=6.371e6, method="vincenty"):
+    """
+    Calculate geodesic arc distance between points (lon1, lat1) and (lon2, lat2).
+
+    PARAMETERS:
+    -----------
+        lon1 : float
+            Start longitude(s), in degrees
+        lat1 : float
+            Start latitude(s), in degrees
+        lon2 : float
+            End longitude(s), in degrees
+        lat2 : float
+            End latitude(s), in degrees
+        R : float
+            Radius of sphere. Default: 6.371e6 (realistic Earth value). Set to 1 for
+            arc distance in radius.
+        method : str
+            Name of method. Supported methods: ["vincenty", "haversine", "law of cosines"].
+            Default: "vincenty", which is the most robust. Note, however, that it still can result in
+            vanishingly small (but crucially non-zero) errors; such as that the distance between (0., 0.)
+            and (360., 0.) is 1.e-16 meters when it should be identically zero.
+
+    RETURNS:
+    --------
+
+    dist : float
+        Geodesic distance between points (lon1, lat1) and (lon2, lat2).
+    """
     
-    # phi = latitude
     phi1 = np.deg2rad(lat1)
     phi2 = np.deg2rad(lat2)
     dphi = np.abs(phi2-phi1)
     
-    # lam = longitude
     lam1 = np.deg2rad(lon1)
     lam2 = np.deg2rad(lon2)
     dlam = np.abs(lam2-lam1)
@@ -373,9 +471,39 @@ def distance_on_unit_sphere(lon1, lat1, lon2, lat2, method="vincenty", R=6.371e6
             np.sin(phi1)*np.sin(phi2) + np.cos(phi1)*np.cos(phi2)*np.cos(dlam)
         )
 
-    # Remember to multiply arc by the radius of the earth
-    # in your favorite set of units to get length.
     return R * arc
+
+def spherical_angle(lonA, latA, lonB, latB, lonC, latC):
+    """
+    Calculate the spherical triangle angle alpha between geodesic arcs AB and AC defined by
+    [(lonA, latA), (lonB, latB)] and [(lonA, latA), (lonC, latC)], respectively.
+
+    PARAMETERS:
+    -----------
+        lonA : float
+            Longitude of point A, in degrees
+        latA : float
+            Latitude of point A, in degrees
+        lonB : float
+            Longitude of point B, in degrees
+        latB : float
+            Latitude of point B, in degrees
+        lonC : float
+            Longitude of point C, in degrees
+        latC : float
+            Latitude of point C, in degrees
+
+    RETURNS:
+    --------
+
+    angle : float
+        Spherical absolute value of triangle angle alpha, in radians.
+    """
+    a = distance_on_unit_sphere(lonB, latB, lonC, latC, R=1.)
+    b = distance_on_unit_sphere(lonC, latC, lonA, latA, R=1.)
+    c = distance_on_unit_sphere(lonA, latA, lonB, latB, R=1.)
+        
+    return np.arccos(np.clip((np.cos(a) - np.cos(b)*np.cos(c))/(np.sin(b)*np.sin(c)), -1., 1.))
 
 def arc_path_range(lon1, lat1, lon2, lat2, N, start=0., stop=1.):
     r = np.linspace(start, stop, N)
@@ -402,11 +530,3 @@ def arc_path(lon1, lat1, lon2, lat2, r):
     lats = np.rad2deg(np.arctan2(z, np.sqrt(x**2 + y**2)))
     
     return lons, lats
-
-def spherical_angle(lonA, latA, lonB, latB, lonC, latC):
-    
-    a = distance_on_unit_sphere(lonB, latB, lonC, latC, R=1.)
-    b = distance_on_unit_sphere(lonC, latC, lonA, latA, R=1.)
-    c = distance_on_unit_sphere(lonA, latA, lonB, latB, R=1.)
-        
-    return np.arccos(np.clip((np.cos(a) - np.cos(b)*np.cos(c))/(np.sin(b)*np.sin(c)), -1., 1.))

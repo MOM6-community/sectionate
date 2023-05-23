@@ -17,7 +17,7 @@ coords = {
     'X': {'outer': 'xq'},
     'Y': {'outer': 'yq'}
 }
-grid = xgcm.Grid(ds, coords=coords, periodic=("X"))
+grid = xgcm.Grid(ds, coords=coords, periodic=["X"])
 
 def modequal(a,b):
     return np.equal(np.mod(a, 360.), np.mod(b, 360.))
