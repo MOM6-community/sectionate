@@ -293,7 +293,7 @@ def infer_grid_path(i1, j1, i2, j2, gridlon, gridlat, periodic=["X"], topology="
     while (i%nx != i2) or (j != j2):
         # safety precaution: exit after taking enough steps to have crossed the entire model grid
         if ct > (nx+ny+1):
-            raise RuntimeError(f"Should have reached the endpoint by now: {ct}/{Nsteps} steps.")
+            raise RuntimeError(f"Should have reached the endpoint by now.")
 
         d_current = distance_on_unit_sphere(
                 gridlon[j,i],
