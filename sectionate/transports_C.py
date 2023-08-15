@@ -378,3 +378,44 @@ def find_offset_center_corner(
     joffset = jcenter - top
 
     return ioffset, joffset
+
+def sectionate_gridwidth(
+    grid,
+    ds,
+    isec,
+    jsec,
+    uname="dyCu",
+    vname="dxCv",
+    layer="z_l",
+    interface="z_i",
+    outname="cell_area",
+    section="sect",
+    offset_center_x=0,
+    offset_center_y=0,
+):
+
+    uvpoints = MOM6_UVpoints_from_section(isec, jsec)
+    out=None
+    
+    for pt in uvpoints:
+        if pt[0] == "U":
+            tmp = grid[uname].isel(xq=pt[1], yh=pt[2] + offset_center_y).rename({"yh": "ysec", "xq": "xsec"}).expand_dims(dim=section, axis=-1)
+        if pt[0] == "V":
+            tmp = grid[vname].isel(xh=pt[1] + offset_center_x, yq=pt[2]).rename({"yq": "ysec", "xh": "xsec"}).expand_dims(dim=section, axis=-1)
+        
+        if out is None:
+            out = tmp.copy()
+        else:
+            out = xr.concat([out, tmp], dim=section)
+    
+    grid_height = ds[interface].diff(interface).rename({interface : 'z_l'})
+    grid_height[layer] = ds[layer]
+    section_gridwidth = out.rename('section_gridwidth')
+    section_cellarea = section_gridwidth * grid_height
+    section_cellarea = section_cellarea.T.rename('cell_area')    
+    
+    dsout = xr.Dataset()
+    dsout['section_gridwidth'] = section_gridwidth
+    dsout['section_cellarea'] = section_cellarea  
+    
+    return dsout
