@@ -53,17 +53,17 @@ def coord_dict(grid):
         and either 'outer' or 'right' position. ('left' position not yet supported.)
     """
     if check_symmetric(grid):
-        q_pos = "outer"
+        corner_pos = "outer"
     else:
-        q_pos = "right"
+        corner_pos = "right"
         
     return {
         "X": {
-            "h": grid.axes['X'].coords["center"],
-            "q": grid.axes["X"].coords[q_pos]},
+            "center": grid.axes["X"].coords["center"],
+            "corner": grid.axes["X"].coords[corner_pos]},
         "Y": {
-            "h": grid.axes['Y'].coords["center"],
-            "q": grid.axes["Y"].coords[q_pos]},
+            "center": grid.axes["Y"].coords["center"],
+            "corner": grid.axes["Y"].coords[corner_pos]},
     }
     
 def check_symmetric(grid):
@@ -84,7 +84,7 @@ def check_symmetric(grid):
         
     """
     pos_dict = {
-        p : ((p in grid.axes['X'].coords) and (p in grid.axes['Y'].coords))
+        p : ((p in grid.axes["X"].coords) and (p in grid.axes["Y"].coords))
         for p in ["outer", "right"]
     }
     if pos_dict["outer"]:

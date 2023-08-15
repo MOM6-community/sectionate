@@ -52,15 +52,16 @@ def extract_tracer(
     section["Umask"] = xr.DataArray(uvindices["var"]=="U", dims=sect_coord)
     section["Vmask"] = xr.DataArray(uvindices["var"]=="V", dims=sect_coord)
 
-    usel_left  = {coords["X"]["h"]: np.mod(section["i"]-np.int64(symmetric), da[coords["X"]["h"]].size),
-                  coords["Y"]["h"]: np.mod(section["j"]                    , da[coords["Y"]["h"]].size)}
-    usel_right = {coords["X"]["h"]: np.mod(section["i"]+1-np.int64(symmetric), da[coords["X"]["h"]].size),
-                  coords["Y"]["h"]: np.mod(section["j"]                      , da[coords["Y"]["h"]].size)}
+    increment = 1 if symmetric else 0
+    usel_left  = {coords["X"]["center"]: np.mod(section["i"]-increment  , da[coords["X"]["center"]].size),
+                  coords["Y"]["center"]: np.mod(section["j"]            , da[coords["Y"]["center"]].size)}
+    usel_right = {coords["X"]["center"]: np.mod(section["i"]-increment+1, da[coords["X"]["center"]].size),
+                  coords["Y"]["center"]: np.mod(section["j"]            , da[coords["Y"]["center"]].size)}
 
-    vsel_left  = {coords["X"]["h"]: np.mod(section["i"]                    , da[coords["X"]["h"]].size),
-                  coords["Y"]["h"]: np.mod(section["j"]-np.int64(symmetric), da[coords["Y"]["h"]].size)}
-    vsel_right = {coords["X"]["h"]: np.mod(section["i"]                      , da[coords["X"]["h"]].size),
-                  coords["Y"]["h"]: np.mod(section["j"]+1-np.int64(symmetric), da[coords["Y"]["h"]].size)}
+    vsel_left  = {coords["X"]["center"]: np.mod(section["i"]            , da[coords["X"]["center"]].size),
+                  coords["Y"]["center"]: np.mod(section["j"]-increment  , da[coords["Y"]["center"]].size)}
+    vsel_right = {coords["X"]["center"]: np.mod(section["i"]            , da[coords["X"]["center"]].size),
+                  coords["Y"]["center"]: np.mod(section["j"]-increment+1, da[coords["Y"]["center"]].size)}
 
     tracer = sum([
         xr.where(~np.isnan(da.isel(usel_right)), 0.5*da.isel(usel_left),  da.isel(usel_left) ).fillna(0.) * section["Umask"],

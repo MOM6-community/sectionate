@@ -3,7 +3,7 @@ import setuptools
 
 setuptools.setup(
     name="sectionate",
-    version="0.0.2",
+    version="0.2.0",
     author="Raphael Dussin",
     author_email="raphael.dussin@gmail.com",
     description=("A package to create grid-consistent sections in climate model outputs"),
