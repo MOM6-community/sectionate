@@ -20,7 +20,6 @@ def load_CM4p25(z_coord="zstr"):
     ds = fix_grid_coords(ds, og, sg)
     return ds_to_grid(ds)
     
-    
 def fix_grid_coords(ds, og, sg):
     og['deptho'] = (
         og['deptho'].where(~np.isnan(og['deptho']), 0.)
@@ -74,4 +73,4 @@ def ds_to_grid(ds, z_coord="zstr"):
             **coords,
             **{'Z': {'center': 'rho2_l', 'outer': 'rho2_i'}}
         }
-    return ds, xgcm.Grid(ds, coords=coords, periodic=["X"])
+    return xgcm.Grid(ds, coords=coords, boundary={"X":"periodic", "Y":"periodic", "Z":"extend"}, autoparse_metadata=False)

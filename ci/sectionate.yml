@@ -2,7 +2,7 @@ name: sectionate
 channels:
   - conda-forge
 dependencies:
-  - python=3.8
+  - python>=3.8
   - cartopy
   - cftime
   - dask
@@ -17,7 +17,7 @@ dependencies:
   - pytest
   - scipy
   - xarray
-  - xgcm
+  - xgcm>=0.8.1
   - pip:
     - cmip_basins
     - xoverturning

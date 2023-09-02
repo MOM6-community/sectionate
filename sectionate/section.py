@@ -19,7 +19,7 @@ def grid_section(grid, lons, lats, topology="cartesian"):
     lats: list or np.ndarray
         Latitudes, in degrees (in range [-90, 90]), of consecutive vertices defining a piece-wise geodesic section.
     topology: str
-        Default: 'cartesian'. Currently only supports the following options: ['cartesian', 'MOM-tripolar'].
+        Default: "cartesian". Currently only supports the following options: ["cartesian", "MOM-tripolar"].
         
     Returns
     -------
@@ -34,7 +34,7 @@ def grid_section(grid, lons, lats, topology="cartesian"):
         lons,
         lats,
         check_symmetric(grid),
-        periodic=[ax for ax in grid.axes if grid.axes[ax]._periodic],
+        boundary={ax:grid.axes[ax]._boundary for ax in grid.axes},
         topology=topology
     )
 
@@ -44,7 +44,7 @@ def create_section_composite(
     lons,
     lats,
     symmetric,
-    periodic=["X"],
+    boundary={"X":"periodic", "Y":"periodic"},
     topology="cartesian"
     ):
     """
@@ -55,20 +55,19 @@ def create_section_composite(
     -----------
 
     gridlon: np.ndarray
-        2d array of longitude (with dimensions ('Y', 'X')), in degrees
+        2d array of longitude (with dimensions ("Y", "X")), in degrees
     gridlat: np.ndarray
-        2d array of latitude (with dimensions ('Y', 'X')), in degrees
+        2d array of latitude (with dimensions ("Y", "X")), in degrees
     lons: list of float
         longitude of section starting, intermediate and end points, in degrees
     lats: list of float
         latitude of section starting, intermediate and end points, in degrees
     symmetric: bool
         True if symmetric (vorticity on "outer" positions); False if non-symmetric (assuming "right" positions).
-    periodic: ("X") or False
-        Default: ("X"). Set to False if using a non-periodic regional domain. For "periodic=False", the algorithm will
-        break if shortest paths between two points in the domain leaves the domain!
+    boundary: dictionary mapping grid axis to boundary condition
+        Default: {"X":"periodic", "Y":"periodic"}. Set to {"X":"extend", "Y":"extend"} if using a non-periodic regional domain.
     topology: str
-        Default: 'cartesian'. Currently only supports the following options: ['cartesian', 'MOM-tripolar'].
+        Default: "cartesian". Currently only supports the following options: ["cartesian", "MOM-tripolar"].
 
     RETURNS:
     -------
@@ -85,7 +84,7 @@ def create_section_composite(
 
     if len(lons) != len(lats):
         raise ValueError("lons and lats should have the same length")
-        
+
     for k in range(len(lons) - 1):
         iseg, jseg, lonseg, latseg = create_section(
             gridlon,
@@ -95,7 +94,7 @@ def create_section_composite(
             lons[k + 1],
             lats[k + 1],
             symmetric,
-            periodic=periodic,
+            boundary=boundary,
             topology=topology
         )
 
@@ -111,7 +110,7 @@ def create_section_composite(
 
     return isect.astype(np.int64), jsect.astype(np.int64), lonsect, latsect
 
-def create_section(gridlon, gridlat, lonstart, latstart, lonend, latend, symmetric, periodic=["X"], topology="cartesian"):
+def create_section(gridlon, gridlat, lonstart, latstart, lonend, latend, symmetric, boundary={"X":"periodic", "Y":"periodic"}, topology="cartesian"):
     """
     Compute a section segment along velocity faces, as defined by coordinates of vorticity points (gridlon, gridlat),
     that most closely approximates the geodesic path between points (lonstart, latstart) and (lonend, latend).
@@ -120,9 +119,9 @@ def create_section(gridlon, gridlat, lonstart, latstart, lonend, latend, symmetr
     -----------
 
     gridlon: np.ndarray
-        2d array of longitude (with dimensions ('Y', 'X')), in degrees
+        2d array of longitude (with dimensions ("Y", "X")), in degrees
     gridlat: np.ndarray
-        2d array of latitude (with dimensions ('Y', 'X')), in degrees
+        2d array of latitude (with dimensions ("Y", "X")), in degrees
     lonstart: float
         longitude of starting point, in degrees
     lonend: float
@@ -133,11 +132,10 @@ def create_section(gridlon, gridlat, lonstart, latstart, lonend, latend, symmetr
         latitude of end point, in degrees
     symmetric: bool
         True if symmetric (vorticity on "outer" positions); False if non-symmetric (assuming "right" positions).
-    periodic: ("X") or False
-        Default: ("X"). Set to False if using a non-periodic regional domain. For "periodic=False", the algorithm will
-        break if shortest paths between two points in the domain leaves the domain!
+    boundary: dictionary mapping grid axis to boundary condition
+        Default: {"X":"periodic", "Y":"periodic"}. Set to {"X":"extend", "Y":"extend"} if using a non-periodic regional domain.
     topology: str
-        Default: 'cartesian'. Currently only supports the following options: ['cartesian', 'MOM-tripolar'].
+        Default: "cartesian". Currently only supports the following options: ["cartesian", "MOM-tripolar"].
 
     RETURNS:
     -------
@@ -147,7 +145,7 @@ def create_section(gridlon, gridlat, lonstart, latstart, lonend, latend, symmetr
         (lonsect, latsect) are the corresponding longitude and latitudes.
     """
 
-    if symmetric and periodic==["X"]:
+    if symmetric and boundary["X"] == "periodic":
         gridlon=gridlon[:,:-1]
         gridlat=gridlat[:,:-1]
 
@@ -158,7 +156,7 @@ def create_section(gridlon, gridlat, lonstart, latstart, lonend, latend, symmetr
         latend,
         gridlon,
         gridlat,
-        periodic=periodic,
+        boundary=boundary,
         topology=topology
     )
     return (
@@ -168,7 +166,7 @@ def create_section(gridlon, gridlat, lonstart, latstart, lonend, latend, symmetr
         latseg
     )
 
-def infer_grid_path_from_geo(lonstart, latstart, lonend, latend, gridlon, gridlat, periodic=["X"], topology="cartesian"):
+def infer_grid_path_from_geo(lonstart, latstart, lonend, latend, gridlon, gridlat, boundary={"X":"periodic", "Y":"periodic"}, topology="cartesian"):
     """
     Find the grid indices (and coordinates) of vorticity points that most closely approximates
     the geodesic path between points (lonstart, latstart) and (lonend, latend).
@@ -188,11 +186,10 @@ def infer_grid_path_from_geo(lonstart, latstart, lonend, latend, gridlon, gridla
         2d array of longitude, in degrees
     gridlat: np.ndarray
         2d array of latitude, in degrees
-    periodic: ["X"] or False
-        Default: ["X"]. Set to False if using a non-periodic regional domain. For "periodic=False", the algorithm will
-        break if shortest paths between two points in the domain leaves the domain!
+    boundary: dictionary mapping grid axis to boundary condition
+        Default: {"X":"periodic", "Y":"periodic"}. Set to {"X":"extend", "Y":"extend"} if using a non-periodic regional domain.
     topology: str
-        Default: 'cartesian'. Currently only supports the following options: ['cartesian', 'MOM-tripolar'].
+        Default: "cartesian". Currently only supports the following options: ["cartesian", "MOM-tripolar"].
 
     RETURNS:
     -------
@@ -221,14 +218,14 @@ def infer_grid_path_from_geo(lonstart, latstart, lonend, latend, gridlon, gridla
         jend,
         gridlon,
         gridlat,
-        periodic=periodic,
+        boundary=boundary,
         topology=topology
     )
 
     return iseg, jseg, lonseg, latseg
 
 
-def infer_grid_path(i1, j1, i2, j2, gridlon, gridlat, periodic=["X"], topology="cartesian"):
+def infer_grid_path(i1, j1, i2, j2, gridlon, gridlat, boundary={"X":"periodic", "Y":"periodic"}, topology="cartesian"):
     """
     Find the grid indices (and coordinates) of vorticity points that most closely approximate
     the geodesic path between points (gridlon[j1,i1], gridlat[j1,i1]) and
@@ -249,11 +246,10 @@ def infer_grid_path(i1, j1, i2, j2, gridlon, gridlat, periodic=["X"], topology="
         2d array of longitude, in degrees
     gridlat: np.ndarray
         2d array of latitude, in degrees
-    periodic: ("X") or False
-        Default: ("X"). Set to False if using a non-periodic regional domain. For "periodic=False", the algorithm will
-        break if shortest paths between two points in the domain leaves the domain!
+    boundary: dictionary mapping grid axis to boundary condition
+        Default: {"X":"periodic", "Y":"periodic"}. Set to {"X":"extend", "Y":"extend"} if using a non-periodic regional domain.
     topology: str
-        Default: 'cartesian'. Currently only supports the following options: ['cartesian', 'MOM-tripolar'].
+        Default: "cartesian". Currently only supports the following options: ["cartesian", "MOM-tripolar"].
 
     RETURNS:
     -------
@@ -291,6 +287,7 @@ def infer_grid_path(i1, j1, i2, j2, gridlon, gridlat, periodic=["X"], topology="
     # start and end points (the shortest geodesic path)
     j_prev, i_prev = j,i
     while (i%nx != i2) or (j != j2):
+                
         # safety precaution: exit after taking enough steps to have crossed the entire model grid
         if ct > (nx+ny+1):
             raise RuntimeError(f"Should have reached the endpoint by now.")
@@ -305,7 +302,7 @@ def infer_grid_path(i1, j1, i2, j2, gridlon, gridlat, periodic=["X"], topology="
         if d_current < 1.e-12:
             break
         
-        if periodic==["X"]:
+        if boundary["X"] == "periodic":
             right = (j, (i+1)%nx)
             left = (j, (i-1)%nx)
         else:
@@ -325,7 +322,7 @@ def infer_grid_path(i1, j1, i2, j2, gridlon, gridlat, periodic=["X"], topology="
             raise ValueError("Only 'cartesian' and 'MOM-tripolar' grid topologies are currently supported.")
         
         neighbors = [right, left, down, up]
-        
+
         smallest_angle = np.inf
         d_list = []
         for (_j, _i) in neighbors:
@@ -358,15 +355,15 @@ def infer_grid_path(i1, j1, i2, j2, gridlon, gridlat, periodic=["X"], topology="
         # approaching the top corners of the grid (edges of the tripolar seams),
         # but sectionate behaves quite strangely in these cases.
         # Here, although none of the points get us closer to our target point, we 
-        # pick the one that is the closest and hope that will put us on the right path.
-        # Maybe it is the wrong choice.
-        if smallest_angle == np.inf:
+        # pick the one that, aside from the previous point, that is the closest and
+        # hope that will put us on the right path.
+        if ((j_next, i_next) == (j_prev, i_prev)) or (smallest_angle == np.inf):
             if (j_prev, i_prev) in neighbors:
                 idx = neighbors.index((j_prev, i_prev))
                 del neighbors[idx]
                 del d_list[idx]
             
-            (j_next, i_next ) = neighbors[np.argmin(d_list)]
+            (j_next, i_next) = neighbors[np.argmin(d_list)]
 
         j_prev, i_prev = j,i
         
