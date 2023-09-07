@@ -274,7 +274,7 @@ def convergent_transport(
         positive_in = is_mask_inside(positive_in, grid, sect)
         
     else:
-        if geometry=="cartesian" and grid.axes["X"]._boundary is "periodic":
+        if (geometry == "cartesian") and (grid.axes["X"]._boundary == "periodic"):
             raise ValueError("Periodic cartesian domains are not yet supported!")
         coords = coord_dict(grid)
         geo_corners = get_geo_corners(grid)

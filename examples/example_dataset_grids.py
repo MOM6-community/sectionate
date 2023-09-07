@@ -55,6 +55,7 @@ def fix_grid_coords(ds, og, sg):
         'geolon_c': xr.DataArray(og['geolon_c'].values, dims=("yq", "xq",)),
         'geolat_c': xr.DataArray(og['geolat_c'].values, dims=("yq", "xq",)),
         'deptho':   xr.DataArray(og['deptho'].values, dims=("yh", "xh",)),
+        'wet_v':    xr.DataArray(og['wet_v'].values, dims=("yq", "xh",)),
     })
     return ds
 
