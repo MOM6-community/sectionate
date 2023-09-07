@@ -1,0 +1,35 @@
+[project]
+name = "sectionate"
+version = "0.2.0"
+authors = [
+    {name="Raphael Dussin", email="raphael.dussin@gmail.com"},
+    {name="Henri F. Drake", email="hfdrake@uci.edu"}
+]
+description = "A package to sample grid-consistent sections from ocean model outputs"
+readme = "README.md"
+requires-python = ">=3.8"
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "License :: OSI Approved :: GNU General Public License v3 (GPLv3)",
+    "Operating System :: OS Independent",
+]
+dependencies = [
+    "dask",
+    "numba",
+    "numpy",
+    "scipy",
+    "xarray",
+    "xgcm @ git+https://github.com/xgcm/xgcm.git@7492277de22ed1e677a6a7523b61b20643a98a77",
+]
+
+[project.urls]
+"Homepage" = "https://github.com/raphaeldussin/sectionate"
+"Bugs/Issues/Features" = "https://github.com/raphaeldussin/sectionate/issues"
+"Sibling package" = "https://github.com/hdrake/regionate"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.metadata]
+allow-direct-references = true
