@@ -19,5 +19,5 @@ jupyter-lab
 
 **Minimal installation within an existing environment**
 ```bash
-pip install git+https://github.com/hdrake/sectionate.git
+pip install git+https://github.com/hdrake/sectionate.git@master
 ```
