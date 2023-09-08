@@ -322,6 +322,7 @@ def infer_grid_path(i1, j1, i2, j2, gridlon, gridlat, boundary={"X":"periodic", 
         
         neighbors = [right, left, down, up]
 
+        j_next, i_next = None, None
         smallest_angle = np.inf
         d_list = []
         for (_j, _i) in neighbors:
@@ -332,31 +333,34 @@ def infer_grid_path(i1, j1, i2, j2, gridlon, gridlat, boundary={"X":"periodic", 
                 lat2
             )
             d_list.append(d/d_current)
-            if d==0.:
-                j_next, i_next = _j, _i
-                smallest_angle = 0.
-                break
-            elif d < d_current:
-                angle = spherical_angle(
-                    lon2,
-                    lat2,
-                    lon1,
-                    lat1,
-                    gridlon[_j,_i],
-                    gridlat[_j,_i],
-                )
-                if angle < smallest_angle:
+            if d < d_current:
+                if d==0.: # We're done!
                     j_next, i_next = _j, _i
-                    smallest_angle = angle
-                    
-        # TODO: Better handling of the edge cases where none of the neighbors
-        # get us closer to the target coordinates! This seems to only happen when
-        # approaching the top corners of the grid (edges of the tripolar seams),
-        # but sectionate behaves quite strangely in these cases.
-        # Here, although none of the points get us closer to our target point, we 
-        # pick the one that, aside from the previous point, that is the closest and
-        # hope that will put us on the right path.
-        if ((j_next, i_next) == (j_prev, i_prev)) or (smallest_angle == np.inf):
+                    smallest_angle = 0.
+                    break
+                # Instead of simply moving to the point that gets us closest to the target,
+                # a more robust approach is to pick, among the points that do get us closer,
+                # the one that most closely follows the great circle between the start and
+                # end points of the section.
+                else:
+                    angle = spherical_angle(
+                        lon2,
+                        lat2,
+                        lon1,
+                        lat1,
+                        gridlon[_j,_i],
+                        gridlat[_j,_i],
+                    )
+                    if angle < smallest_angle:
+                        j_next, i_next = _j, _i
+                        smallest_angle = angle
+        
+        # There can be some strange edge cases in which none of the neighboring points
+        # actually get us closer to the target (e.g. when closing folds in the grid).
+        # In these cases, simply pick the adjacent point that gets us closest, as long as
+        # it was not our previous point (to avoid endless loops). This algorithm should be
+        # guaranteed to always get us to the target point.
+        if (smallest_angle == np.inf) or (j_next, i_next) == (j_prev, i_prev):
             if (j_prev, i_prev) in neighbors:
                 idx = neighbors.index((j_prev, i_prev))
                 del neighbors[idx]
