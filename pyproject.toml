@@ -34,5 +34,5 @@ build-backend = "hatchling.build"
 [tool.hatch.metadata]
 allow-direct-references = true
 
-[tool.hatch.dynamic]
+[tool.hatch.version]
 path = "sectionate/version.py"
