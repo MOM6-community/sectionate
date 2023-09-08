@@ -1,6 +1,6 @@
 [project]
 name = "sectionate"
-version = "0.2.0"
+dynamic = ["version"]
 authors = [
     {name="Raphael Dussin", email="raphael.dussin@gmail.com"},
     {name="Henri F. Drake", email="hfdrake@uci.edu"}
@@ -33,3 +33,6 @@ build-backend = "hatchling.build"
 
 [tool.hatch.metadata]
 allow-direct-references = true
+
+[tool.hatch.dynamic]
+version = {attr = "package.__version__"}
