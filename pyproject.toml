@@ -35,4 +35,4 @@ build-backend = "hatchling.build"
 allow-direct-references = true
 
 [tool.hatch.dynamic]
-version = {attr = "package.__version__"}
+path = "sectionate/version.py"
