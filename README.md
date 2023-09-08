@@ -1,5 +1,5 @@
 # sectionate
-compute section in ocean models
+A package to sample grid-consistent sections from ocean model outputs
 
 [![Binder](https://mybinder.org/badge_logo.svg)](https://mybinder.org/v2/gh/raphaeldussin/sectionate/master)
 
