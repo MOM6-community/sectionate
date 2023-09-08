@@ -4,7 +4,7 @@ import xarray as xr
 
 from .gridutils import get_geo_corners, check_symmetric
 
-def grid_section(grid, lons, lats, topology="cartesian"):
+def grid_section(grid, lons, lats, topology="latlon"):
     """
     Compute composite section along model `grid` velocity faces that approximates geodesic paths
     between consecutive points defined by (lons, lats).
@@ -19,7 +19,7 @@ def grid_section(grid, lons, lats, topology="cartesian"):
     lats: list or np.ndarray
         Latitudes, in degrees (in range [-90, 90]), of consecutive vertices defining a piece-wise geodesic section.
     topology: str
-        Default: "cartesian". Currently only supports the following options: ["cartesian", "MOM-tripolar"].
+        Default: "latlon". Currently only supports the following options: ["latlon", "cartesian", "MOM-tripolar"].
         
     Returns
     -------
@@ -44,8 +44,8 @@ def create_section_composite(
     lons,
     lats,
     symmetric,
-    boundary={"X":"periodic", "Y":"periodic"},
-    topology="cartesian"
+    boundary={"X":"periodic", "Y":"extend"},
+    topology="latlon"
     ):
     """
     Compute composite section along velocity faces, as defined by coordinates of vorticity points (gridlon, gridlat),
@@ -65,9 +65,9 @@ def create_section_composite(
     symmetric: bool
         True if symmetric (vorticity on "outer" positions); False if non-symmetric (assuming "right" positions).
     boundary: dictionary mapping grid axis to boundary condition
-        Default: {"X":"periodic", "Y":"periodic"}. Set to {"X":"extend", "Y":"extend"} if using a non-periodic regional domain.
+        Default: {"X":"periodic", "Y":"extend"}. Set to {"X":"extend", "Y":"extend"} if using a non-periodic regional domain.
     topology: str
-        Default: "cartesian". Currently only supports the following options: ["cartesian", "MOM-tripolar"].
+        Default: "latlon". Currently only supports the following options: ["latlon", "cartesian", "MOM-tripolar"].
 
     RETURNS:
     -------
@@ -110,7 +110,7 @@ def create_section_composite(
 
     return isect.astype(np.int64), jsect.astype(np.int64), lonsect, latsect
 
-def create_section(gridlon, gridlat, lonstart, latstart, lonend, latend, symmetric, boundary={"X":"periodic", "Y":"periodic"}, topology="cartesian"):
+def create_section(gridlon, gridlat, lonstart, latstart, lonend, latend, symmetric, boundary={"X":"periodic", "Y":"extend"}, topology="latlon"):
     """
     Compute a section segment along velocity faces, as defined by coordinates of vorticity points (gridlon, gridlat),
     that most closely approximates the geodesic path between points (lonstart, latstart) and (lonend, latend).
@@ -133,9 +133,9 @@ def create_section(gridlon, gridlat, lonstart, latstart, lonend, latend, symmetr
     symmetric: bool
         True if symmetric (vorticity on "outer" positions); False if non-symmetric (assuming "right" positions).
     boundary: dictionary mapping grid axis to boundary condition
-        Default: {"X":"periodic", "Y":"periodic"}. Set to {"X":"extend", "Y":"extend"} if using a non-periodic regional domain.
+        Default: {"X":"periodic", "Y":"extend"}. Set to {"X":"extend", "Y":"extend"} if using a non-periodic regional domain.
     topology: str
-        Default: "cartesian". Currently only supports the following options: ["cartesian", "MOM-tripolar"].
+        Default: "latlon". Currently only supports the following options: ["latlon", "cartesian", "MOM-tripolar"].
 
     RETURNS:
     -------
@@ -166,7 +166,7 @@ def create_section(gridlon, gridlat, lonstart, latstart, lonend, latend, symmetr
         latseg
     )
 
-def infer_grid_path_from_geo(lonstart, latstart, lonend, latend, gridlon, gridlat, boundary={"X":"periodic", "Y":"periodic"}, topology="cartesian"):
+def infer_grid_path_from_geo(lonstart, latstart, lonend, latend, gridlon, gridlat, boundary={"X":"periodic", "Y":"extend"}, topology="latlon"):
     """
     Find the grid indices (and coordinates) of vorticity points that most closely approximates
     the geodesic path between points (lonstart, latstart) and (lonend, latend).
@@ -187,9 +187,9 @@ def infer_grid_path_from_geo(lonstart, latstart, lonend, latend, gridlon, gridla
     gridlat: np.ndarray
         2d array of latitude, in degrees
     boundary: dictionary mapping grid axis to boundary condition
-        Default: {"X":"periodic", "Y":"periodic"}. Set to {"X":"extend", "Y":"extend"} if using a non-periodic regional domain.
+        Default: {"X":"periodic", "Y":"extend"}. Set to {"X":"extend", "Y":"extend"} if using a non-periodic regional domain.
     topology: str
-        Default: "cartesian". Currently only supports the following options: ["cartesian", "MOM-tripolar"].
+        Default: "latlon". Currently only supports the following options: ["latlon", "cartesian", "MOM-tripolar"].
 
     RETURNS:
     -------
@@ -225,7 +225,7 @@ def infer_grid_path_from_geo(lonstart, latstart, lonend, latend, gridlon, gridla
     return iseg, jseg, lonseg, latseg
 
 
-def infer_grid_path(i1, j1, i2, j2, gridlon, gridlat, boundary={"X":"periodic", "Y":"periodic"}, topology="cartesian"):
+def infer_grid_path(i1, j1, i2, j2, gridlon, gridlat, boundary={"X":"periodic", "Y":"extend"}, topology="latlon"):
     """
     Find the grid indices (and coordinates) of vorticity points that most closely approximate
     the geodesic path between points (gridlon[j1,i1], gridlat[j1,i1]) and
@@ -247,9 +247,9 @@ def infer_grid_path(i1, j1, i2, j2, gridlon, gridlat, boundary={"X":"periodic", 
     gridlat: np.ndarray
         2d array of latitude, in degrees
     boundary: dictionary mapping grid axis to boundary condition
-        Default: {"X":"periodic", "Y":"periodic"}. Set to {"X":"extend", "Y":"extend"} if using a non-periodic regional domain.
+        Default: {"X":"periodic", "Y":"extend"}. Set to {"X":"extend", "Y":"extend"} if using a non-periodic regional domain.
     topology: str
-        Default: "cartesian". Currently only supports the following options: ["cartesian", "MOM-tripolar"].
+        Default: "latlon". Currently only supports the following options: ["latlon", "cartesian", "MOM-tripolar"].
 
     RETURNS:
     -------
@@ -316,10 +316,10 @@ def infer_grid_path(i1, j1, i2, j2, gridlon, gridlat, boundary={"X":"periodic", 
             else:
                 up = (j-1, (nx-1) - (i%nx))
                 
-        elif topology=="cartesian":
+        elif topology=="cartesian" or topology=="latlon":
                 up = (np.clip(j+1, 0, ny-1), i)
         else:
-            raise ValueError("Only 'cartesian' and 'MOM-tripolar' grid topologies are currently supported.")
+            raise ValueError("Only 'cartesian', 'latlon', and 'MOM-tripolar' grid topologies are currently supported.")
         
         neighbors = [right, left, down, up]
 

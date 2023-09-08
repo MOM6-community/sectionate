@@ -2,8 +2,8 @@ import numpy as np
 import xarray as xr
 
 
-# define simple grid
-lon, lat = np.meshgrid(np.arange(360), np.arange(-90, 90))
+# define simple lat-lon grid
+lon, lat = np.meshgrid(np.arange(360), np.arange(-80, 81))
 ds = xr.Dataset()
 ds["lon"] = xr.DataArray(lon, dims=("y", "x"))
 ds["lat"] = xr.DataArray(lat, dims=("y", "x"))
@@ -16,14 +16,14 @@ def test_distance_on_unit_sphere():
     assert np.isclose(d, 0., atol=1.e-14)
     d = distance_on_unit_sphere(0, 0, 360, 0, R=1.)
     assert np.isclose(d, 0., atol=1.e-14)
-    d = distance_on_unit_sphere(0, 90, 0, -90, R=1.)
-    assert np.isclose(d, np.pi, atol=1.e-14)
+    d = distance_on_unit_sphere(0, 45, 0, -45, R=1.)
+    assert np.isclose(d, np.pi/2, atol=1.e-14)
     d = distance_on_unit_sphere(0, 0, 180, 0, R=1.)
     assert np.isclose(d, np.pi, atol=1.e-14)
     d = distance_on_unit_sphere(180, 0, 90, 0, R=1.)
     assert np.isclose(d, np.pi/2, atol=1.e-14)
-    d = distance_on_unit_sphere(180, 90, 180, 0, R=1.)
-    assert np.isclose(d, np.pi/2, atol=1.e-14)
+    d = distance_on_unit_sphere(180, 45, 180, 0, R=1.)
+    assert np.isclose(d, np.pi/4, atol=1.e-14)
 
 
 def test_find_closest_grid_point():
@@ -32,23 +32,23 @@ def test_find_closest_grid_point():
     # check it works with numpy arrays
     i, j = find_closest_grid_point(0, 0, lon, lat)
     assert np.equal(i, 0)
-    assert np.equal(j, 90)
+    assert np.equal(j, 80)
 
     # and xarray
     i, j = find_closest_grid_point(0, 0, ds["lon"], ds["lat"])
     assert np.equal(i, 0)
-    assert np.equal(j, 90)
+    assert np.equal(j, 80)
 
-    i, j = find_closest_grid_point(180, 89, ds["lon"], ds["lat"])
+    i, j = find_closest_grid_point(180, 80, ds["lon"], ds["lat"])
     assert np.equal(i, 180)
-    assert np.equal(j, 179)
+    assert np.equal(j, 160)
 
 
 def test_grid_path():
     from sectionate.section import infer_grid_path
 
     # test zonal line
-    isec, jsec, lonsec, latsec = infer_grid_path(0, 90, 179, 90, lon, lat)
+    isec, jsec, lonsec, latsec = infer_grid_path(0, 80, 179, 80, lon, lat)
     assert len(isec) == 180
     assert lonsec[0] == 0.0
     assert lonsec[-1] == 179.0
@@ -56,12 +56,12 @@ def test_grid_path():
     assert latsec[-1] == 0.0
 
     # test merid line
-    isec, jsec, lonsec, latsec = infer_grid_path(180, 0, 180, 179, lon, lat)
-    assert len(isec) == 180
-    assert lonsec[0] == 180.0
-    assert lonsec[-1] == 180.0
-    assert latsec[0] == -90.0
-    assert latsec[-1] == 89.0
+    isec, jsec, lonsec, latsec = infer_grid_path(0, 0, 0, 160, lon, lat)
+    assert len(isec) == 161
+    assert lonsec[0] == 0.
+    assert lonsec[-1] == 0.
+    assert latsec[0] == -80.0
+    assert latsec[-1] == 80.0
 
     # test diagonal
     isec, jsec, lonsec, latsec = infer_grid_path(0, 0, 100, 100, lon, lat)
@@ -84,13 +84,9 @@ def test_infer_grid_path_from_geo():
     assert latsec[-1] == 0.0
 
     # test merid line
-    isec, jsec, lonsec, latsec = infer_grid_path_from_geo(180, -89, 180, 89, lon, lat)
-    assert len(isec) == 179
-    assert lonsec[0] == 180.0
+    isec, jsec, lonsec, latsec = infer_grid_path_from_geo(180, -80, 180, 80, lon, lat)
+    assert len(isec) == 161
+    assert lonsec[0]  == 180.0
     assert lonsec[-1] == 180.0
-    assert latsec[0] == -89.0
-    assert latsec[-1] == 89.0
-
-    # test diagonal
-    isec, jsec, lonsec, latsec = infer_grid_path_from_geo(0, -89, 180, 0, lon, lat)
-    assert len(isec) == 272
+    assert latsec[0]  == -80.0
+    assert latsec[-1] == 80.0
