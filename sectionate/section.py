@@ -341,9 +341,11 @@ def infer_grid_path(i1, j1, i2, j2, gridlon, gridlat, boundary={"X":"periodic", 
                 # Instead of simply moving to the point that gets us closest to the target,
                 # a more robust approach is to pick, among the points that do get us closer,
                 # the one that most closely follows the great circle between the start and
-                # end points of the section.
+                # end points of the section. We average the angles relative to both end
+                # points so that the shortest path is unique and insensitive to which direction
+                # the section is traveled.
                 else:
-                    angle = spherical_angle(
+                    angle1 = spherical_angle(
                         lon2,
                         lat2,
                         lon1,
@@ -351,6 +353,15 @@ def infer_grid_path(i1, j1, i2, j2, gridlon, gridlat, boundary={"X":"periodic", 
                         gridlon[_j,_i],
                         gridlat[_j,_i],
                     )
+                    angle2 = spherical_angle(
+                        lon1,
+                        lat1,
+                        lon2,
+                        lat2,
+                        gridlon[_j,_i],
+                        gridlat[_j,_i],
+                    )
+                    angle = (angle1+angle2)/2.
                     if angle < smallest_angle:
                         j_next, i_next = _j, _i
                         smallest_angle = angle
