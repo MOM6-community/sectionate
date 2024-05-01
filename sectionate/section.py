@@ -422,7 +422,7 @@ def find_closest_grid_point(lon, lat, gridlon, gridlat):
     if isinstance(gridlat, xr.core.dataarray.DataArray):
         gridlat = gridlat.values
     dist = distance_on_unit_sphere(lon, lat, gridlon, gridlat)
-    jclose, iclose = np.unravel_index(dist.argmin(), gridlon.shape)
+    jclose, iclose = np.unravel_index(np.nanargmin(dist), gridlon.shape)
     return iclose, jclose
 
 def distance_on_unit_sphere(lon1, lat1, lon2, lat2, R=6.371e6, method="vincenty"):
