@@ -1,13 +1,24 @@
-name: root
+name: sectionate
 channels:
   - conda-forge
 dependencies:
-  - python=3.6
-  - xarray
-  - numpy
-  - pandas
-  - netcdf4
-  - matplotlib
+  - python>=3.8
   - cartopy
+  - cftime
+  - dask
+  - ipython
+  - jupyterlab
+  - matplotlib
+  - netcdf4
+  - numba
+  - numpy
+  - pip
+  - pydap
+  - pytest
+  - scipy
+  - xarray
   - pip:
-    - git+https://github.com/raphaeldussin/sectionate.git
+    - cmip_basins
+    - git+https://github.com/raphaeldussin/xoverturning.git@4aa055be39580e5eef6b4e22cc8693410ee3cf77
+    - regionmask
+    - git+https://github.com/xgcm/xgcm.git@7492277de22ed1e677a6a7523b61b20643a98a77

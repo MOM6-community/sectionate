@@ -1,25 +1,34 @@
 import numpy as np
 import xarray as xr
 import xgcm
+from glob import glob
 
 z_suffixes = {
     "zstr": "z",
     "rho2": "rho2"
 }
 
-def load_CM4p25(z_coord="zstr"):
+def load_CM4p25(z_coord="zstr", show_dmget=False):
     realm = "ocean"
     frequency = "annual"
     diag_path = "/archive/Raphael.Dussin/FMS2019.01.03_devgfdl_20221223/CM4_piControl_c192_OM4p25_v8/gfdl.ncrc4-intel18-prod-openmp/pp/"
-    
+
     suffix = z_suffixes[z_coord]
-    ds = xr.open_mfdataset(f"{diag_path}/{realm}_{frequency}_{suffix}/ts/{frequency}/10yr/*.0341*.nc", chunks={'time':1}, decode_times=False)
-    og = xr.open_dataset(f"{diag_path}/{realm}_{frequency}_{suffix}/{realm}_{frequency}_{suffix}.static.nc")
-    sg = xr.open_dataset("/archive/Raphael.Dussin/datasets/OM4p25/c192_OM4_025_grid_No_mg_drag_v20160808_unpacked/ocean_hgrid.nc")
-    
-    ds = fix_grid_coords(ds, og, sg)
-    return ds_to_grid(ds)
-    
+    if show_dmget:
+        filelist = glob(f"{diag_path}/{realm}_{frequency}_{suffix}/ts/{frequency}/10yr/*.0341*.nc")
+        filelist += [f"{diag_path}/{realm}_{frequency}_{suffix}/{realm}_{frequency}_{suffix}.static.nc"]
+        filelist += ["/archive/Raphael.Dussin/datasets/OM4p25/c192_OM4_025_grid_No_mg_drag_v20160808_unpacked/ocean_hgrid.nc"]
+        dmget_cmd = "dmget " + ' '.join(filelist)
+        print(f"{dmget_cmd}")
+        return None
+    else:
+        ds = xr.open_mfdataset(f"{diag_path}/{realm}_{frequency}_{suffix}/ts/{frequency}/10yr/*.0341*.nc", chunks={'time':10}, decode_times=False)
+        og = xr.open_dataset(f"{diag_path}/{realm}_{frequency}_{suffix}/{realm}_{frequency}_{suffix}.static.nc")
+        sg = xr.open_dataset("/archive/Raphael.Dussin/datasets/OM4p25/c192_OM4_025_grid_No_mg_drag_v20160808_unpacked/ocean_hgrid.nc")
+
+        ds = fix_grid_coords(ds, og, sg)
+        return ds_to_grid(ds)
+
 def fix_grid_coords(ds, og, sg):
     og['deptho'] = (
         og['deptho'].where(~np.isnan(og['deptho']), 0.)
@@ -34,7 +43,7 @@ def fix_grid_coords(ds, og, sg):
         'geolon_c': xr.DataArray(sg['x'][0::2,0::2].data, dims=["yq", "xq"]),
         'geolat_c': xr.DataArray(sg['y'][0::2,0::2].data, dims=["yq", "xq"])
     })
-    
+
     ds = ds.assign_coords({
         'dxCv': xr.DataArray(
             og['dxCv'].transpose('xh', 'yq').values, dims=('xh', 'yq',)
@@ -43,7 +52,7 @@ def fix_grid_coords(ds, og, sg):
             og['dyCu'].transpose('xq', 'yh').values, dims=('xq', 'yh',)
         )
     }) # add velocity face widths to calculate distances along the section
-    
+
     ds = ds.assign_coords({
         'areacello':xr.DataArray(og['areacello'].values, dims=("yh", "xh")),
         'geolon':   xr.DataArray(og['geolon'].values, dims=("yh", "xh")),
