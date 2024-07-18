@@ -2,7 +2,7 @@ name: sectionate
 channels:
   - conda-forge
 dependencies:
-  - python=3.8
+  - python>=3.8
   - cartopy
   - cftime
   - dask
@@ -15,12 +15,10 @@ dependencies:
   - pip
   - pydap
   - pytest
-  - regionmask
-  - seawater
   - scipy
   - xarray
-  - xgcm
   - pip:
     - cmip_basins
-    - xoverturning
-    - git+https://github.com/raphaeldussin/sectionate.git
+    - git+https://github.com/raphaeldussin/xoverturning.git@4aa055be39580e5eef6b4e22cc8693410ee3cf77
+    - regionmask
+    - git+https://github.com/xgcm/xgcm.git@7492277de22ed1e677a6a7523b61b20643a98a77

@@ -1,109 +1,234 @@
 import numpy as np
-import matplotlib.pyplot as plt
 import xarray as xr
 
+from .gridutils import get_geo_corners, check_symmetric
 
-def create_section_composite(gridlon, gridlat, segment_lons, segment_lats):
-    """create section from list of segments
+def grid_section(grid, lons, lats, topology="latlon"):
+    """
+    Compute composite section along model `grid` velocity faces that approximates geodesic paths
+    between consecutive points defined by (lons, lats).
+
+    Parameters
+    ----------
+    grid: xgcm.Grid
+        Object describing the geometry of the ocean model grid, including metadata about variable names for
+        the staggered C-grid dimensions and c oordinates.
+    lons: list or np.ndarray
+        Longitudes, in degrees, of consecutive vertices defining a piece-wise geodesic section.
+    lats: list or np.ndarray
+        Latitudes, in degrees (in range [-90, 90]), of consecutive vertices defining a piece-wise geodesic section.
+    topology: str
+        Default: "latlon". Currently only supports the following options: ["latlon", "cartesian", "MOM-tripolar"].
+        
+    Returns
+    -------
+    isect, jsect, lonsect, latsect: `np.ndarray` of types (int, int, float, float) 
+        (isect, jsect) correspond to indices of vorticity points that define velocity faces.
+        (lonsect, latsect) are the corresponding longitude and latitudes.
+    """
+    geocorners = get_geo_corners(grid)
+    return create_section_composite(
+        geocorners["X"],
+        geocorners["Y"],
+        lons,
+        lats,
+        check_symmetric(grid),
+        boundary={ax:grid.axes[ax]._boundary for ax in grid.axes},
+        topology=topology
+    )
+
+def create_section_composite(
+    gridlon,
+    gridlat,
+    lons,
+    lats,
+    symmetric,
+    boundary={"X":"periodic", "Y":"extend"},
+    topology="latlon"
+    ):
+    """
+    Compute composite section along velocity faces, as defined by coordinates of vorticity points (gridlon, gridlat),
+    that most closely approximates geodesic paths between consecutive points defined by (lons, lats).
 
     PARAMETERS:
     -----------
 
     gridlon: np.ndarray
-        2d array of longitude
+        2d array of longitude (with dimensions ("Y", "X")), in degrees
     gridlat: np.ndarray
-        2d array of latitude
-    segment_lons: list of float
-        longitude of section starting, intermediate and end points
-    segment_lats: list of float
-        latitude of section starting, intermediate and end points
-
+        2d array of latitude (with dimensions ("Y", "X")), in degrees
+    lons: list of float
+        longitude of section starting, intermediate and end points, in degrees
+    lats: list of float
+        latitude of section starting, intermediate and end points, in degrees
+    symmetric: bool
+        True if symmetric (vorticity on "outer" positions); False if non-symmetric (assuming "right" positions).
+    boundary: dictionary mapping grid axis to boundary condition
+        Default: {"X":"periodic", "Y":"extend"}. Set to {"X":"extend", "Y":"extend"} if using a non-periodic regional domain.
+    topology: str
+        Default: "latlon". Currently only supports the following options: ["latlon", "cartesian", "MOM-tripolar"].
 
     RETURNS:
     -------
 
-    isect, jsect: list of int
-        list of (i,j) pairs for section
-    xsect, ysect: list of float
-        corresponding longitude and latitude for isect, jsect
-
+    isect, jsect, lonsect, latsect: `np.ndarray` of types (int, int, float, float) 
+        (isect, jsect) correspond to indices of vorticity points that define velocity faces.
+        (lonsect, latsect) are the corresponding longitude and latitudes.
     """
 
     isect = np.array([], dtype=np.int64)
     jsect = np.array([], dtype=np.int64)
-    xsect = np.array([])
-    ysect = np.array([])
+    lonsect = np.array([], dtype=np.float64)
+    latsect = np.array([], dtype=np.float64)
 
-    if len(segment_lons) != len(segment_lats):
-        raise ValueError("segment_lons and segment_lats should have the same lenght")
+    if len(lons) != len(lats):
+        raise ValueError("lons and lats should have the same length")
 
-    for k in range(len(segment_lons) - 1):
-        iseg, jseg, xseg, yseg = create_section(
+    for k in range(len(lons) - 1):
+        iseg, jseg, lonseg, latseg = create_section(
             gridlon,
             gridlat,
-            segment_lons[k],
-            segment_lats[k],
-            segment_lons[k + 1],
-            segment_lats[k + 1],
+            lons[k],
+            lats[k],
+            lons[k + 1],
+            lats[k + 1],
+            symmetric,
+            boundary=boundary,
+            topology=topology
         )
 
         isect = np.concatenate([isect, iseg[:-1]], axis=0)
         jsect = np.concatenate([jsect, jseg[:-1]], axis=0)
-        xsect = np.concatenate([xsect, xseg[:-1]], axis=0)
-        ysect = np.concatenate([ysect, yseg[:-1]], axis=0)
+        lonsect = np.concatenate([lonsect, lonseg[:-1]], axis=0)
+        latsect = np.concatenate([latsect, latseg[:-1]], axis=0)
+        
+    isect = np.concatenate([isect, [iseg[-1]]], axis=0)
+    jsect = np.concatenate([jsect, [jseg[-1]]], axis=0)
+    lonsect = np.concatenate([lonsect, [lonseg[-1]]], axis=0)
+    latsect = np.concatenate([latsect, [latseg[-1]]], axis=0)
 
-    return isect, jsect, xsect, ysect
+    return isect.astype(np.int64), jsect.astype(np.int64), lonsect, latsect
 
+def create_section(gridlon, gridlat, lonstart, latstart, lonend, latend, symmetric, boundary={"X":"periodic", "Y":"extend"}, topology="latlon"):
+    """
+    Compute a section segment along velocity faces, as defined by coordinates of vorticity points (gridlon, gridlat),
+    that most closely approximates the geodesic path between points (lonstart, latstart) and (lonend, latend).
 
-def create_section(gridlon, gridlat, lonstart, latstart, lonend, latend):
-    """ replacement function for the old create_section """
+    PARAMETERS:
+    -----------
 
-    iseg, jseg, lonseg, latseg = infer_broken_line_from_geo(
-        lonstart, latstart, lonend, latend, gridlon, gridlat
+    gridlon: np.ndarray
+        2d array of longitude (with dimensions ("Y", "X")), in degrees
+    gridlat: np.ndarray
+        2d array of latitude (with dimensions ("Y", "X")), in degrees
+    lonstart: float
+        longitude of starting point, in degrees
+    lonend: float
+        longitude of end point, in degrees
+    latstart: float
+        latitude of starting point, in degrees
+    latend: float
+        latitude of end point, in degrees
+    symmetric: bool
+        True if symmetric (vorticity on "outer" positions); False if non-symmetric (assuming "right" positions).
+    boundary: dictionary mapping grid axis to boundary condition
+        Default: {"X":"periodic", "Y":"extend"}. Set to {"X":"extend", "Y":"extend"} if using a non-periodic regional domain.
+    topology: str
+        Default: "latlon". Currently only supports the following options: ["latlon", "cartesian", "MOM-tripolar"].
+
+    RETURNS:
+    -------
+
+    isect, jsect, lonsect, latsect: `np.ndarray` of types (int, int, float, float) 
+        (isect, jsect) correspond to indices of vorticity points that define velocity faces.
+        (lonsect, latsect) are the corresponding longitude and latitudes.
+    """
+
+    if symmetric and boundary["X"] == "periodic":
+        gridlon=gridlon[:,:-1]
+        gridlat=gridlat[:,:-1]
+
+    iseg, jseg, lonseg, latseg = infer_grid_path_from_geo(
+        lonstart,
+        latstart,
+        lonend,
+        latend,
+        gridlon,
+        gridlat,
+        boundary=boundary,
+        topology=topology
     )
-    return iseg, jseg, lonseg, latseg
+    return (
+        iseg,
+        jseg,
+        lonseg,
+        latseg
+    )
 
-
-def infer_broken_line_from_geo(lonstart, latstart, lonend, latend, gridlon, gridlat):
-    """find the broken line joining (lonstart, latstart) and (lonend, latend) pairs
+def infer_grid_path_from_geo(lonstart, latstart, lonend, latend, gridlon, gridlat, boundary={"X":"periodic", "Y":"extend"}, topology="latlon"):
+    """
+    Find the grid indices (and coordinates) of vorticity points that most closely approximates
+    the geodesic path between points (lonstart, latstart) and (lonend, latend).
 
     PARAMETERS:
     -----------
 
     lonstart: float
-        longitude of section starting point
+        longitude of section starting point, in degrees
     latstart: float
-        latitude of section starting point
+        latitude of section starting point, in degrees
     lonend: float
-        longitude of section end point
+        longitude of section end point, in degrees
     latend: float
-        latitude of section end point
-
+        latitude of section end point, in degrees
     gridlon: np.ndarray
-        2d array of longitude
+        2d array of longitude, in degrees
     gridlat: np.ndarray
-        2d array of latitude
+        2d array of latitude, in degrees
+    boundary: dictionary mapping grid axis to boundary condition
+        Default: {"X":"periodic", "Y":"extend"}. Set to {"X":"extend", "Y":"extend"} if using a non-periodic regional domain.
+    topology: str
+        Default: "latlon". Currently only supports the following options: ["latlon", "cartesian", "MOM-tripolar"].
 
     RETURNS:
     -------
 
-    iseg, jseg: list of int
-        list of (i,j) pairs bounded by (i1, j1) and (i2, j2)
-    lonseg, latseg: list of float
-        corresponding longitude and latitude for iseg, jseg
+    isect, jsect, lonsect, latsect: `np.ndarray` of types (int, int, float, float) 
+        (isect, jsect) correspond to indices of vorticity points that define velocity faces.
+        (lonsect, latsect) are the corresponding longitude and latitudes.
     """
 
-    istart, jstart = find_closest_grid_point(lonstart, latstart, gridlon, gridlat)
-    iend, jend = find_closest_grid_point(lonend, latend, gridlon, gridlat)
-    iseg, jseg, lonseg, latseg = infer_broken_line(
-        istart, jstart, iend, jend, gridlon, gridlat
+    istart, jstart = find_closest_grid_point(
+        lonstart,
+        latstart,
+        gridlon,
+        gridlat
+    )
+    iend, jend = find_closest_grid_point(
+        lonend,
+        latend,
+        gridlon,
+        gridlat
+    )
+    iseg, jseg, lonseg, latseg = infer_grid_path(
+        istart,
+        jstart,
+        iend,
+        jend,
+        gridlon,
+        gridlat,
+        boundary=boundary,
+        topology=topology
     )
 
     return iseg, jseg, lonseg, latseg
 
 
-def infer_broken_line(i1, j1, i2, j2, gridlon, gridlat, nitmax=10000):
-    """find the broken line joining (i1, j1) and (i2, j2) pairs
+def infer_grid_path(i1, j1, i2, j2, gridlon, gridlat, boundary={"X":"periodic", "Y":"extend"}, topology="latlon"):
+    """
+    Find the grid indices (and coordinates) of vorticity points that most closely approximate
+    the geodesic path between points (gridlon[j1,i1], gridlat[j1,i1]) and
+    (gridlon[j2,i2], gridlat[j2,i2]).
 
     PARAMETERS:
     -----------
@@ -116,14 +241,14 @@ def infer_broken_line(i1, j1, i2, j2, gridlon, gridlat, nitmax=10000):
         i-coord of point2
     j2: integer
         j-coord of point2
-
     gridlon: np.ndarray
-        2d array of longitude
+        2d array of longitude, in degrees
     gridlat: np.ndarray
-        2d array of latitude
-
-    nitmax: int
-        max number of iteration allowed
+        2d array of latitude, in degrees
+    boundary: dictionary mapping grid axis to boundary condition
+        Default: {"X":"periodic", "Y":"extend"}. Set to {"X":"extend", "Y":"extend"} if using a non-periodic regional domain.
+    topology: str
+        Default: "latlon". Currently only supports the following options: ["latlon", "cartesian", "MOM-tripolar"].
 
     RETURNS:
     -------
@@ -133,70 +258,136 @@ def infer_broken_line(i1, j1, i2, j2, gridlon, gridlat, nitmax=10000):
     lonseg, latseg: list of float
         corresponding longitude and latitude for iseg, jseg
     """
+    ny, nx = gridlon.shape
+    
+    if isinstance(gridlon, xr.core.dataarray.DataArray):
+        gridlon = gridlon.values
+    if isinstance(gridlat, xr.core.dataarray.DataArray):
+        gridlat = gridlat.values
 
+    # target coordinates
+    lon1, lat1 = gridlon[j1, i1], gridlat[j1, i1]
+    lon2, lat2 = gridlon[j2, i2], gridlat[j2, i2]
+    
     # init loop index to starting position
     i = i1
     j = j1
 
     iseg = [i]  # add first point to list of points
     jseg = [j]  # add first point to list of points
-    ct = 0  # counter for max iteration safeguard
-    ijflip = 1  # 1/0 flip to alternate i,j increment
 
-    # find direction of iteration
-    idir = np.sign(i2 - i1)
-    jdir = np.sign(j2 - j1)
+    # iterate through the grid path steps until we reach end of section
+    ct = 0 # grid path step counter
 
-    # compute predicted slope of the section
-    # set limitslope flag if i1 == i2
-    if idir != 0:
-        slope = (j2 - j1) / (i2 - i1)
-        limitslope = False
-    else:
-        limitslope = True
+    # Grid-agnostic algorithm:
+    # First, find all four neighbors (subject to grid topology)
+    # Second, throw away any that are further from the destination than the current point
+    # Third, go to the valid neighbor that has the smallest angle from the arc path between the
+    # start and end points (the shortest geodesic path)
+    j_prev, i_prev = j,i
+    while (i%nx != i2) or (j != j2):
+                
+        # safety precaution: exit after taking enough steps to have crossed the entire model grid
+        if ct > (nx+ny+1):
+            raise RuntimeError(f"Should have reached the endpoint by now.")
 
-    # iterate until we reach end of section
-    while (i != i2) or (j != j2):
-        # safety precaution, exit after N iterations
-        if ct > nitmax:
-            raise RuntimeError("max iterations reached")
-        ct += 1
-
-        # get 2 possible next points
-        inext = i + idir
-        jnext = j + jdir
-
-        # get prediction for next j point
-        if limitslope:
-            jpred = jnext
+        d_current = distance_on_unit_sphere(
+                gridlon[j,i],
+                gridlat[j,i],
+                lon2,
+                lat2
+            )
+        
+        if d_current < 1.e-12:
+            break
+        
+        if boundary["X"] == "periodic":
+            right = (j, (i+1)%nx)
+            left = (j, (i-1)%nx)
         else:
-            jpred = j1 + slope * (inext - i1)
-
-        # compute distances from predicted j to j and jnext
-        dj_up = (jnext - jpred) * (jnext - jpred)
-        dj_down = (j - jpred) * (j - jpred)
-
-        # decide next increment based on distances
-        if dj_up == dj_down:
-            # if equal distance, increment i then flip switch
-            # to alternate direction of increments to j
-            # if jdir == 0 (j1 == j2), just increment in i
-            if ijflip == 1 or jdir == 0:
-                i = inext
-                ijflip = 0
+            right = (j, np.clip(i+1, 0, nx-1))
+            left = (j, np.clip(i-1, 0, nx-1))
+        down = (np.clip(j-1, 0, ny-1), i)
+        
+        if topology=="MOM-tripolar":
+            if j!=ny-1:
+                up = (j+1, i%nx)
             else:
-                j = jnext
-                ijflip = 1
-        elif dj_up < dj_down:
-            # if predicted is closer to jnext, move to j = jnext
-            j = jnext
-        else:  # dj_up > dj_down
-            # else move to i = inext
-            i = inext
+                up = (j-1, (nx-1) - (i%nx))
+                
+        elif topology=="cartesian" or topology=="latlon":
+                up = (np.clip(j+1, 0, ny-1), i)
+        else:
+            raise ValueError("Only 'cartesian', 'latlon', and 'MOM-tripolar' grid topologies are currently supported.")
+        
+        neighbors = [right, left, down, up]
 
-        # add new point to list
+        j_next, i_next = None, None
+        smallest_angle = np.inf
+        d_list = []
+        for (_j, _i) in neighbors:
+            d = distance_on_unit_sphere(
+                gridlon[_j,_i],
+                gridlat[_j,_i],
+                lon2,
+                lat2
+            )
+            d_list.append(d/d_current)
+            if d < d_current:
+                if d==0.: # We're done!
+                    j_next, i_next = _j, _i
+                    smallest_angle = 0.
+                    break
+                # Instead of simply moving to the point that gets us closest to the target,
+                # a more robust approach is to pick, among the points that do get us closer,
+                # the one that most closely follows the great circle between the start and
+                # end points of the section. We average the angles relative to both end
+                # points so that the shortest path is unique and insensitive to which direction
+                # the section is traveled.
+                else:
+                    angle1 = spherical_angle(
+                        lon2,
+                        lat2,
+                        lon1,
+                        lat1,
+                        gridlon[_j,_i],
+                        gridlat[_j,_i],
+                    )
+                    angle2 = spherical_angle(
+                        lon1,
+                        lat1,
+                        lon2,
+                        lat2,
+                        gridlon[_j,_i],
+                        gridlat[_j,_i],
+                    )
+                    angle = (angle1+angle2)/2.
+                    if angle < smallest_angle:
+                        j_next, i_next = _j, _i
+                        smallest_angle = angle
+        
+        # There can be some strange edge cases in which none of the neighboring points
+        # actually get us closer to the target (e.g. when closing folds in the grid).
+        # In these cases, simply pick the adjacent point that gets us closest, as long as
+        # it was not our previous point (to avoid endless loops). This algorithm should be
+        # guaranteed to always get us to the target point.
+        if (smallest_angle == np.inf) or (j_next, i_next) == (j_prev, i_prev):
+            if (j_prev, i_prev) in neighbors:
+                idx = neighbors.index((j_prev, i_prev))
+                del neighbors[idx]
+                del d_list[idx]
+            
+            (j_next, i_next) = neighbors[np.argmin(d_list)]
+
+        j_prev, i_prev = j,i
+        
+        j = j_next
+        i = i_next
+
         iseg.append(i)
         jseg.append(j)
+        
+        ct+=1
 
     # create lat/lon vectors from i,j pairs
     lonseg = []
@@ -204,19 +395,20 @@ def infer_broken_line(i1, j1, i2, j2, gridlon, gridlat, nitmax=10000):
     for jj, ji in zip(jseg, iseg):
         lonseg.append(gridlon[jj, ji])
         latseg.append(gridlat[jj, ji])
-    return iseg, jseg, lonseg, latseg
+    return np.array(iseg), np.array(jseg), np.array(lonseg), np.array(latseg)
 
 
 def find_closest_grid_point(lon, lat, gridlon, gridlat):
-    """find integer indices of closest grid point in grid of coordinates
-    gridlon, gridlat for a given geographical lon/lat.
+    """
+    Find integer indices of closest grid point in grid of coordinates
+    (gridlon, gridlat), for a given point (lon, at).
 
     PARAMETERS:
     -----------
-        lon (float): longitude of point to find
-        lat (float): latitude of point to find
-        gridlon (numpy.ndarray): grid longitudes
-        gridlat (numpy.ndarray): grid latitudes
+        lon (float): longitude of point to find, in degrees
+        lat (float): latitude of point to find, in degrees
+        gridlon (numpy.ndarray): grid longitudes, in degrees
+        gridlat (numpy.ndarray): grid latitudes, in degrees
 
     RETURNS:
     --------
@@ -229,298 +421,123 @@ def find_closest_grid_point(lon, lat, gridlon, gridlat):
         gridlon = gridlon.values
     if isinstance(gridlat, xr.core.dataarray.DataArray):
         gridlat = gridlat.values
-    dist = distance_on_unit_sphere(lat, lon, gridlat, gridlon)
-    jclose, iclose = np.unravel_index(dist.argmin(), gridlon.shape)
+    dist = distance_on_unit_sphere(lon, lat, gridlon, gridlat)
+    jclose, iclose = np.unravel_index(np.nanargmin(dist), gridlon.shape)
     return iclose, jclose
 
-
-def distance_on_unit_sphere(lat1, long1, lat2, long2):
-
-    # Convert latitude and longitude to
-    # spherical coordinates in radians.
-    degrees_to_radians = np.pi / 180.0
-
-    # phi = 90 - latitude
-    phi1 = (90.0 - lat1) * degrees_to_radians
-    phi2 = (90.0 - lat2) * degrees_to_radians
-
-    # theta = longitude
-    theta1 = long1 * degrees_to_radians
-    theta2 = long2 * degrees_to_radians
-    # Compute spherical distance from spherical coordinates.
-    # For two locations in spherical coordinates
-    # (1, theta, phi) and (1, theta, phi)
-    # cosine( arc length ) =
-    #    sin phi sin phi' cos(theta-theta') + cos phi cos phi'
-    # distance = rho * arc length
-    cos = np.sin(phi1) * np.sin(phi2) * np.cos(theta1 - theta2) + np.cos(phi1) * np.cos(
-        phi2
-    )
-    arc = np.arccos(cos)
-    # Remember to multiply arc by the radius of the earth
-    # in your favorite set of units to get length.
-    return arc
-
-
-# ------------------------- older functions, here for legacy purposes ------------------
-def linear_fit(x, y, x1, y1, x2, y2, eps=1e-12):
-    """generate the function for which we want to find zero contour
-
-    PARAMETERS:
-    -----------
-    x: numpy.ndarray
-        2d array of coordinate1 (e.g. longitude)
-    y: numpy.ndarray
-        2d array of coordinate2 (e.g. latitude)
-    x1: float
-        x-coord of point1
-    y1: float
-        y-coord of point1
-    x2: float
-        x-coord of point2
-    y2: float
-        y-coord of point2
-
+def distance_on_unit_sphere(lon1, lat1, lon2, lat2, R=6.371e6, method="vincenty"):
     """
-    x1 = float(x1)
-    y1 = float(y1)
-    x2 = float(x2)
-    y2 = float(y2)
-
-    alpha = (y2 - y1) / (x2 - x1 + eps)
-    func = y - y1 - alpha * (x - x1)
-    return func
-
-
-def create_zero_contour(func, debug=False):
-    plt.figure()
-    cont = plt.contour(func, 0)
-    if debug:
-        plt.show()
-    plt.close()
-    return cont
-
-
-def get_broken_line_from_contour(
-    contour, rounding="down", debug=False, maxdist=10000000
-):
-    """return a broken line from contour, suitable to integrate transport
+    Calculate geodesic arc distance between points (lon1, lat1) and (lon2, lat2).
 
     PARAMETERS:
     -----------
-
-    contour : matplotlib contour object
-        output of contour(func, [0])
+        lon1 : float
+            Start longitude(s), in degrees
+        lat1 : float
+            Start latitude(s), in degrees
+        lon2 : float
+            End longitude(s), in degrees
+        lat2 : float
+            End latitude(s), in degrees
+        R : float
+            Radius of sphere. Default: 6.371e6 (realistic Earth value). Set to 1 for
+            arc distance in radius.
+        method : str
+            Name of method. Supported methods: ["vincenty", "haversine", "law of cosines"].
+            Default: "vincenty", which is the most robust. Note, however, that it still can result in
+            vanishingly small (but crucially non-zero) errors; such as that the distance between (0., 0.)
+            and (360., 0.) is 1.e-16 meters when it should be identically zero.
 
     RETURNS:
     --------
 
-    iseg, jseg: numpy.ndarray
-        i,j indices of broken line
+    dist : float
+        Geodesic distance between points (lon1, lat1) and (lon2, lat2).
     """
-    # first guess of our broken line is the contour position in (x,y)
-    # raw array has float grid indices
-    for item in contour.allsegs:
-        if len(item) != 0:
-            # discontinuous contours are stored in multiple arrays
-            # so we need to concatenate them
-            contourxy = None
-            for cont in item:
-                if len(cont) != 0:
-                    if contourxy is None:
-                        contourxy = cont
-                    else:
-                        contourxy = np.concatenate([contourxy, cont])
-    xseg_raw = contourxy[:, 0]
-    yseg_raw = contourxy[:, 1]
+    
+    phi1 = np.deg2rad(lat1)
+    phi2 = np.deg2rad(lat2)
+    dphi = np.abs(phi2-phi1)
+    
+    lam1 = np.deg2rad(lon1)
+    lam2 = np.deg2rad(lon2)
+    dlam = np.abs(lam2-lam1)
+    
+    if method=="vincenty":
+        numerator = np.sqrt(
+            (np.cos(phi2)*np.sin(dlam))**2 +
+            (np.cos(phi1)*np.sin(phi2) - np.sin(phi1)*np.cos(phi2)*np.cos(dlam))**2
+        )
+        denominator = np.sin(phi1)*np.sin(phi2) + np.cos(phi1)*np.cos(phi2)*np.cos(dlam)
+        arc = np.arctan2(numerator, denominator)
+        
+    elif method=="haversine":
+        arc = 2*np.arcsin(np.sqrt(
+            np.sin(dphi/2.)**2 + (1. - np.sin(dphi/2.)**2 - np.sin((phi1+phi2)/2.)**2)*np.sin(dlam/2.)**2
+        ))
+    
+        
+    elif method=="law of cosines":
+        arc = np.arccos(
+            np.sin(phi1)*np.sin(phi2) + np.cos(phi1)*np.cos(phi2)*np.cos(dlam)
+        )
 
-    # 1st guess: convert to integer
-    nseg = len(xseg_raw)
-    if rounding == "down":
-        iseg_fg = np.floor(xseg_raw).astype("int")
-        jseg_fg = np.floor(yseg_raw).astype("int")
-    elif rounding == "up":
-        iseg_fg = np.ceil(xseg_raw).astype("int")
-        jseg_fg = np.ceil(yseg_raw).astype("int")
-    else:
-        raise ValueError("Unkown rounding, only up or down")
+    return R * arc
 
-    # 2nd guess: create broken line along cell edges
-    iseg_sg = [iseg_fg[0]]
-    jseg_sg = [jseg_fg[0]]
-
-    for kseg in np.arange(1, nseg):
-        if (iseg_fg[kseg] - iseg_fg[kseg - 1] == 0) and (
-            jseg_fg[kseg] - jseg_fg[kseg - 1] == 0
-        ):
-            pass  # we don't want to double count points
-        elif (iseg_fg[kseg] - iseg_fg[kseg - 1] == 0) or (
-            jseg_fg[kseg] - jseg_fg[kseg - 1] == 0
-        ):
-            # we are along one face of the cell
-            # check for "missing" points
-            if maxdist > np.abs(iseg_fg[kseg] - iseg_fg[kseg - 1]) > 1:
-                if debug:
-                    print(
-                        f"info: filling {iseg_fg[kseg] - iseg_fg[kseg-1]} points in i between {iseg_fg[kseg-1]} and {iseg_fg[kseg]}"
-                    )
-                # add missing points
-                for kpt in range(iseg_fg[kseg - 1] + 1, iseg_fg[kseg] + 1):
-                    iseg_sg.append(kpt)
-                    jseg_sg.append(jseg_fg[kseg])
-            elif maxdist > np.abs(jseg_fg[kseg] - jseg_fg[kseg - 1]) > 1:
-                if debug:
-                    print(
-                        f"info: filling {jseg_fg[kseg] - jseg_fg[kseg-1]} points in j between {jseg_fg[kseg-1]} and {jseg_fg[kseg]}"
-                    )
-                # add missing points
-                for kpt in range(jseg_fg[kseg - 1] + 1, jseg_fg[kseg] + 1):
-                    iseg_sg.append(iseg_fg[kseg])
-                    jseg_sg.append(kpt)
-            else:
-                iseg_sg.append(iseg_fg[kseg])
-                jseg_sg.append(jseg_fg[kseg])
-        else:
-            # we need to create two segments stopping by
-            # an intermediate cell corner
-            iseg_sg.append(iseg_fg[kseg])
-            jseg_sg.append(jseg_fg[kseg - 1])
-            iseg_sg.append(iseg_fg[kseg])
-            jseg_sg.append(jseg_fg[kseg])
-
-    iseg = np.array(iseg_sg, np.dtype("i"))
-    jseg = np.array(jseg_sg, np.dtype("i"))
-
-    return iseg, jseg
-
-
-def bound_broken_line(x, y, x1, y1, x2, y2, iseg, jseg, tol=1.0):
-    """subset the broken line between the bounds
+def spherical_angle(lonA, latA, lonB, latB, lonC, latC):
+    """
+    Calculate the spherical triangle angle alpha between geodesic arcs AB and AC defined by
+    [(lonA, latA), (lonB, latB)] and [(lonA, latA), (lonC, latC)], respectively.
 
     PARAMETERS:
     -----------
-    x: numpy.ndarray
-        2d array of coordinate1 (e.g. longitude)
-    y: numpy.ndarray
-        2d array of coordinate2 (e.g. latitude)
-    x1: float
-        x-coord of point1
-    y1: float
-        y-coord of point1
-    x2: float
-        x-coord of point2
-    y2: float
-        y-coord of point2
-    iseg: numpy.ndarray
-        1d vector of section points i-index
-    jseg: numpy.ndarray
-        1d vector of section points j-index
+        lonA : float
+            Longitude of point A, in degrees
+        latA : float
+            Latitude of point A, in degrees
+        lonB : float
+            Longitude of point B, in degrees
+        latB : float
+            Latitude of point B, in degrees
+        lonC : float
+            Longitude of point C, in degrees
+        latC : float
+            Latitude of point C, in degrees
 
     RETURNS:
     --------
 
-    iseg_bnd, j_seg_bnd: numpy.ndarray
-        iseg, jseg bounded by (x1, y1) and (x2, y2)
-    xseg_bnd, yseg_bnd: numpy.ndarray
-        corresponding geographical coordinates
+    angle : float
+        Spherical absolute value of triangle angle alpha, in radians.
     """
-    nseg = len(iseg)
-    iseg_bnd = []  # indices along x
-    jseg_bnd = []  # indices along y
-    xseg_bnd = []  # x coord values
-    yseg_bnd = []  # y coord values
-    xmin = min(x1, x2)
-    xmax = max(x1, x2)
-    ymin = min(y1, y2)
-    ymax = max(y1, y2)
-    # We should test for numpy/xaray type for x and y and
-    # use .values if xarray
-    xbndlow = xmin
-    xbndhigh = xmax
-    if np.isclose(xmin, xmax, atol=tol):
-        xbndlow -= tol
-        xbndhigh += tol
-    ybndlow = ymin
-    ybndhigh = ymax
-    if np.isclose(ymin, ymax, atol=tol):
-        ybndlow -= tol
-        ybndhigh += tol
+    a = distance_on_unit_sphere(lonB, latB, lonC, latC, R=1.)
+    b = distance_on_unit_sphere(lonC, latC, lonA, latA, R=1.)
+    c = distance_on_unit_sphere(lonA, latA, lonB, latB, R=1.)
+        
+    return np.arccos(np.clip((np.cos(a) - np.cos(b)*np.cos(c))/(np.sin(b)*np.sin(c)), -1., 1.))
 
-    for k in range(nseg):
-        x_pt = x[jseg[k], iseg[k]]
-        y_pt = y[jseg[k], iseg[k]]
-        if (xbndlow <= x_pt <= xbndhigh) and (ybndlow <= y_pt <= ybndhigh):
-            iseg_bnd.append(iseg[k])
-            jseg_bnd.append(jseg[k])
-            xseg_bnd.append(x_pt)
-            yseg_bnd.append(y_pt)
+def arc_path_range(lon1, lat1, lon2, lat2, N, start=0., stop=1.):
+    r = np.linspace(start, stop, N)
+    return arc_path(lon1, lat1, lon2, lat2, r)
+    
+def arc_path(lon1, lat1, lon2, lat2, r):
+    r = np.clip(r, 0., 1.)
+    
+    lam1 = np.deg2rad(lon1)
+    lam2 = np.deg2rad(lon2)
+    
+    phi1 = np.deg2rad(lat1)
+    phi2 = np.deg2rad(lat2)
+    
+    arc = distance_on_unit_sphere(lam1, lam2, phi1, phi2, R=1.)
+    
+    A = np.sin((1-r)*arc)/np.sin(arc)
+    B = np.sin(r*arc)/np.sin(arc)
+    x = A*np.cos(phi1)*np.cos(lam1) + B*np.cos(phi2)*np.cos(lam2)
+    y = A*np.cos(phi1)*np.sin(lam1) + B*np.cos(phi2)*np.sin(lam2)
+    z = A*np.sin(phi1) + B*np.sin(phi2)
 
-    iseg_bnd = np.array(iseg_bnd)
-    jseg_bnd = np.array(jseg_bnd)
-    xseg_bnd = np.array(xseg_bnd)
-    yseg_bnd = np.array(yseg_bnd)
-
-    return iseg_bnd, jseg_bnd, xseg_bnd, yseg_bnd
-
-
-def create_section_old(
-    x, y, x1, y1, x2, y2, method="linear", tol=1.0, rounding="best", debug=False
-):
-    if method == "linear":
-        func = linear_fit(x, y, x1, y1, x2, y2)
-    else:
-        ValueError("only linear is available now")
-    cont = create_zero_contour(func, debug=debug)
-    # generate both contours (rounding up and down)
-    iseg_u, jseg_u = get_broken_line_from_contour(cont, rounding="up", debug=debug)
-    isec_u, jsec_u, xsec_u, ysec_u = bound_broken_line(
-        x, y, x1, y1, x2, y2, iseg_u, jseg_u, tol=tol
-    )
-    iseg_d, jseg_d = get_broken_line_from_contour(cont, rounding="down", debug=debug)
-    isec_d, jsec_d, xsec_d, ysec_d = bound_broken_line(
-        x, y, x1, y1, x2, y2, iseg_d, jseg_d, tol=tol
-    )
-
-    if rounding == "down":
-        isec, jsec, xsec, ysec = isec_d, jsec_d, xsec_d, ysec_d
-    elif rounding == "up":
-        isec, jsec, xsec, ysec = isec_u, jsec_u, xsec_u, ysec_u
-    elif rounding == "best":
-        dist_d1 = []
-        dist_d2 = []
-        dist_u1 = []
-        dist_u2 = []
-        for k in range(len(xsec_d)):
-            dist_d1.append(distance_on_unit_sphere(y1, x1, ysec_d, xsec_d))
-            dist_d2.append(distance_on_unit_sphere(y2, x2, ysec_d, xsec_d))
-        for k in range(len(xsec_u)):
-            dist_u1.append(distance_on_unit_sphere(y1, x1, ysec_u, xsec_u))
-            dist_u2.append(distance_on_unit_sphere(y2, x2, ysec_u, xsec_u))
-
-        dist_d1 = np.array(dist_d1)
-        dist_d2 = np.array(dist_d2)
-        dist_u1 = np.array(dist_u1)
-        dist_u2 = np.array(dist_u2)
-        # start counting points
-        down = 0
-        up = 0
-        if dist_d1.min() < dist_u1.min():
-            down += 1
-        if dist_d2.min() < dist_u2.min():
-            down += 1
-        if dist_d1.min() > dist_u1.min():
-            up += 1
-        if dist_d2.min() > dist_u2.min():
-            up += 1
-
-        if (up > down) and (up != 0):
-            print("best fit is rounding up")
-            isec, jsec, xsec, ysec = isec_u, jsec_u, xsec_u, ysec_u
-        elif (down > up) and (down != 0):
-            print("best fit is rounding down")
-            isec, jsec, xsec, ysec = isec_d, jsec_d, xsec_d, ysec_d
-        else:
-            raise ValueError("cannot choose...")
-    else:
-        raise ValueError("unknown roundup type, only up, down and best")
-    return isec, jsec, xsec, ysec
+    lons = np.rad2deg(np.arctan2(y, x))
+    lats = np.rad2deg(np.arctan2(z, np.sqrt(x**2 + y**2)))
+    
+    return lons, lats
