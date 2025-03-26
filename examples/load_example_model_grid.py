@@ -12,9 +12,9 @@ def download_MOM6_example_data():
     if not os.path.exists(destination_path):
         with urllib.request.urlopen(url + file_name) as response, open(destination_path, 'wb') as out_file:
             shutil.copyfileobj(response, out_file)
-        print(f"File '{file_name}' has been downloaded.")
+        print(f"File '{file_name}' [1.1 GB] has been downloaded to {destination_path}.")
     else:
-        print(f"File '{file_name}' already exists. Skipping download.")
+        print(f"File '{file_name}' already exists at {destination_path}. Skipping download.")
 
     return destination_path
 
