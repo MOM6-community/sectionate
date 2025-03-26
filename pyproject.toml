@@ -23,8 +23,8 @@ dependencies = [
 ]
 
 [project.urls]
-"Homepage" = "https://github.com/raphaeldussin/sectionate"
-"Bugs/Issues/Features" = "https://github.com/raphaeldussin/sectionate/issues"
+"Homepage" = "https://github.com/MOM6-community/sectionate"
+"Bugs/Issues/Features" = "https://github.com/MOM6-community/sectionate/issues"
 "Sibling package" = "https://github.com/hdrake/regionate"
 
 [build-system]
