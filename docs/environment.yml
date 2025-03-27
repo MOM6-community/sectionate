@@ -11,6 +11,3 @@ dependencies:
   - netcdf4
   - pydap
   - pytest
-  - pip
-  - pip:
-    - git+https://github.com/raphaeldussin/xoverturning.git@main
