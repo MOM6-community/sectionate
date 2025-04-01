@@ -6,15 +6,14 @@ import xgcm
 
 def download_MOM6_example_data():
     # download the data
-    url = 'https://zenodo.org/record/15085089/files/'
-    file_name = 'MOM6_global_example_diagnostics.nc'
+    url = 'https://zenodo.org/record/15117174/files/'
+    file_name = 'MOM6_global_example_coarsened_sigma2_budgets.nc'
     destination_path = f"../data/{file_name}"
     if not os.path.exists(destination_path):
+        print(f"File '{file_name}' being downloaded to {destination_path}.")
         with urllib.request.urlopen(url + file_name) as response, open(destination_path, 'wb') as out_file:
             shutil.copyfileobj(response, out_file)
-        print(f"File '{file_name}' [1.1 GB] has been downloaded to {destination_path}.")
-    else:
-        print(f"File '{file_name}' already exists at {destination_path}. Skipping download.")
+        print(f"File '{file_name}' has been downloaded to {destination_path}.")
 
     return destination_path
 
