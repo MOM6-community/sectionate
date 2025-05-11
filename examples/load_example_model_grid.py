@@ -6,7 +6,7 @@ import xgcm
 
 def download_MOM6_example_data():
     # download the data
-    url = 'https://zenodo.org/record/15117174/files/'
+    url = 'https://zenodo.org/record/15384717/files/'
     file_name = 'MOM6_global_example_coarsened_sigma2_budgets.nc'
     destination_path = f"../data/{file_name}"
     if not os.path.exists(destination_path):
