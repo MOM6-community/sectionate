@@ -168,7 +168,7 @@ def join_sections(name, *sections, **kwargs):
   - Section(section2, [(100.0, 0.0), (200.0, 0.0)])
     """
     if type(name) is not str:
-        raise ValueError("first arugment (name) must be a str.")
+        raise ValueError("first argument (name) must be a str.")
     elif any([not(isinstance(s, Section)) for s in sections]):
         raise ValueError("all positional arguments after the first must be instances of Section")
     align = kwargs["align"] if "align" in kwargs else True
