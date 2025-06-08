@@ -20,6 +20,8 @@ class Section():
             lons and lats are lists of np.ndarray instances of the same
             length with elements of type float.
 
+        Keyword Arguments
+        -----------------
         children [mapping from str to Section (default: {})] -- dictionary
             mapping the names of child sections to their Section instances.
             This attribute will generally be populated automatically from
@@ -76,16 +78,99 @@ class Section():
         section.save = self.save.copy()
         return section
     
-    def __repr__(self):
-        summary = f"Section({self.name}, {self.coords})"
+    def __repr__(self, indent=0, show_attributes=True):
+        indent_str = "  " * indent
+        summary = f"{indent_str}Section({self.name}, {self.coords})"
+        
+        # Automatically extract and add attributes
+        if show_attributes:
+            summary += f"\n{indent_str}attributes:"
+            for attr, value in vars(self).items():
+                if attr not in ['children', 'save'] and not attr.startswith('_'):
+                    summary += f"\n{indent_str}  {attr}"
+    
         if len(self.children) > 0:
-            child_list = "\n".join([f"  - {s}" for s in self.children.values()])
-            summary += f"\n Children:\n{child_list}"
+            summary += f"\n{indent_str}  children:"
+            for child in self.children.values():
+                child_repr = child.__repr__(indent + 3, show_attributes=False)
+                summary += f"\n{indent_str}    - {child_repr.lstrip()}"
         return summary
+        
+class GriddedSection(Section):
+    """Initiate named hydrographic section specific to an ocean model grid
+
+    Arguments
+    ---------
+    section [sectionate.Section] -- named Sectionate section
+    grid [xgcm.Grid] -- ocean model grid object
+
+    Returns
+    -------
+    instance of GriddedSection
+    """
+    def __init__(self, section, grid):
+        super().__init__(
+            section.name,
+            section.coords,
+            children = section.children,
+            parents = section.parents
+        )
+        self.grid = grid
+        self.grid_section()
+
+    def grid_section(self, **kwargs):
+        """Pass this Section's coordinates to sectionate.grid_section
+
+        Arguments
+        ---------
+        grid
+
+        Keyword Arguments
+        -----------------
+        **kwargs passed directly to sectionate.grid_section
+        """
+        self.i, self.j, self.lons_sec, self.lats_sec = grid_section(
+            self.grid,
+            self.lons,
+            self.lats,
+            **kwargs
+        )
+        
+        return self.i, self.j, self.lons_sec, self.lats_sec
 
 def join_sections(name, *sections, **kwargs):
+    """
+    Joins child Sections together to create a parent Section.
+
+    Arguments
+    ---------
+    name [str] -- name of the parent section
+    *sections [Section] -- the sequence of child sections to be joined
+
+    Keyword Arguments
+    -----------------
+    align [bool (Default : True)] -- reverse sections as needed to minimize
+        the distance between end/start points of consecutive sections
+
+    Returns
+    -------
+    instance of Section
+
+    Example
+    -------
+    >>> section1 = sec.Section("section1", ([0., 100.], [0., 0.]))
+    >>> section2 = sec.Section("section2", ([100., 200.], [0., 0.]))
+    >>> section = sec.join_sections("section", section1, section2)
+    >>> section
+    Section(section, [(0.0, 0.0), (100.0, 0.0), (100.0, 0.0), (200.0, 0.0)])
+ Children:
+  - Section(section1, [(0.0, 0.0), (100.0, 0.0)])
+  - Section(section2, [(100.0, 0.0), (200.0, 0.0)])
+    """
     if type(name) is not str:
         raise ValueError("first arugment (name) must be a str.")
+    elif any([not(isinstance(s, Section)) for s in sections]):
+        raise ValueError("all positional arguments after the first must be instances of Section")
     align = kwargs["align"] if "align" in kwargs else True
     extend = kwargs["extend"] if "extend" in kwargs else False
     
@@ -629,8 +714,14 @@ def align_coords(coords1, coords2, extend=False):
 
     Arguments
     ---------
-    coords1 [list of (lon,lat) tuples] -- 
-    coords2 [list of (lon,lat) tuples] --
+    coords1 [list of (lon,lat) tuples]
+    coords2 [list of (lon,lat) tuples]
+
+    Keyword Arguments
+    -----------------
+    extend [bool (Default : False)] -- extends coords1 so that its starting point is 
+        equal to the end point of coords2 and its end point is the starting point of
+        coords2.
 
     Returns
     -------
