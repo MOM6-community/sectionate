@@ -27,7 +27,7 @@ class Section():
             This attribute will generally be populated automatically from
             the function `join_sections`.
 
-        parents [mapping from str to Section (default: {})] -- To do
+        parents [mapping from str to Section (default: {})] -- TO DO
 
         Returns
         -------
@@ -47,7 +47,7 @@ class Section():
         elif type(coords) is list:
             if all([(type(c) is tuple) and (len(c)==2) for c in coords]):
                 self.coords = coords.copy()
-                self.lons, self.lats = lonlat_from_coords(self.coords)
+                self.lons_c, self.lats_c = lonlat_from_coords(self.coords)
             else:
                 raise ValueError("If coords is a list, its elements must be (lon,lat) 2-tuples")
         else:
@@ -65,7 +65,7 @@ class Section():
     def update_coords(self, coords):
         """Update coordinates (including longitude and latitude arrrays)"""
         self.coords = coords
-        self.lons, self.lats = lonlat_from_coords(self.coords)
+        self.lons_c, self.lats_c = lonlat_from_coords(self.coords)
 
     def copy(self):
         """Create a deep copy of the Section instance"""
@@ -129,14 +129,14 @@ class GriddedSection(Section):
         -----------------
         **kwargs passed directly to sectionate.grid_section
         """
-        self.i, self.j, self.lons_sec, self.lats_sec = grid_section(
+        self.i_c, self.j_c, self.lons_c, self.lats_c = grid_section(
             self.grid,
-            self.lons,
-            self.lats,
+            self.lons_c,
+            self.lats_c,
             **kwargs
         )
         
-        return self.i, self.j, self.lons_sec, self.lats_sec
+        return self.i_c, self.j_c, self.lons_c, self.lats_c
 
 def join_sections(name, *sections, **kwargs):
     """
@@ -215,9 +215,9 @@ def grid_section(grid, lons, lats, topology="latlon"):
         
     Returns
     -------
-    isect, jsect, lonsect, latsect: `np.ndarray` of types (int, int, float, float) 
-        (isect, jsect) correspond to indices of vorticity points that define velocity faces.
-        (lonsect, latsect) are the corresponding longitude and latitudes.
+    i_c, j_c, lons_c, lats_c: `np.ndarray` of types (int, int, float, float) 
+        (i_c, j_c) correspond to indices of vorticity points that define velocity faces.
+        (lons_c, lats_c) are the corresponding longitude and latitudes.
     """
     geocorners = get_geo_corners(grid)
     return create_section_composite(
@@ -264,21 +264,21 @@ def create_section_composite(
     RETURNS:
     -------
 
-    isect, jsect, lonsect, latsect: `np.ndarray` of types (int, int, float, float) 
-        (isect, jsect) correspond to indices of vorticity points that define velocity faces.
-        (lonsect, latsect) are the corresponding longitude and latitudes.
+    i_c, j_c, lons_c, lats_c: `np.ndarray` of types (int, int, float, float) 
+        (i_c, j_c) correspond to indices of vorticity points that define velocity faces.
+        (lons_c, lats_c) are the corresponding longitude and latitudes.
     """
 
-    isect = np.array([], dtype=np.int64)
-    jsect = np.array([], dtype=np.int64)
-    lonsect = np.array([], dtype=np.float64)
-    latsect = np.array([], dtype=np.float64)
+    i_c = np.array([], dtype=np.int64)
+    j_c = np.array([], dtype=np.int64)
+    lons_c = np.array([], dtype=np.float64)
+    lats_c = np.array([], dtype=np.float64)
 
     if len(lons) != len(lats):
         raise ValueError("lons and lats should have the same length")
 
     for k in range(len(lons) - 1):
-        iseg, jseg, lonseg, latseg = create_section(
+        i_c_seg, j_c_seg, lons_c_seg, lats_c_seg = create_section(
             gridlon,
             gridlat,
             lons[k],
@@ -290,17 +290,17 @@ def create_section_composite(
             topology=topology
         )
 
-        isect = np.concatenate([isect, iseg[:-1]], axis=0)
-        jsect = np.concatenate([jsect, jseg[:-1]], axis=0)
-        lonsect = np.concatenate([lonsect, lonseg[:-1]], axis=0)
-        latsect = np.concatenate([latsect, latseg[:-1]], axis=0)
+        i_c = np.concatenate([i_c, i_c_seg[:-1]], axis=0)
+        j_c = np.concatenate([j_c, j_c_seg[:-1]], axis=0)
+        lons_c = np.concatenate([lons_c, lons_c_seg[:-1]], axis=0)
+        lats_c = np.concatenate([lats_c, lats_c_seg[:-1]], axis=0)
         
-    isect = np.concatenate([isect, [iseg[-1]]], axis=0)
-    jsect = np.concatenate([jsect, [jseg[-1]]], axis=0)
-    lonsect = np.concatenate([lonsect, [lonseg[-1]]], axis=0)
-    latsect = np.concatenate([latsect, [latseg[-1]]], axis=0)
+    i_c = np.concatenate([i_c, [i_c_seg[-1]]], axis=0)
+    j_c = np.concatenate([j_c, [j_c_seg[-1]]], axis=0)
+    lons_c = np.concatenate([lons_c, [lons_c_seg[-1]]], axis=0)
+    lats_c = np.concatenate([lats_c, [lats_c_seg[-1]]], axis=0)
 
-    return isect.astype(np.int64), jsect.astype(np.int64), lonsect, latsect
+    return i_c.astype(np.int64), j_c.astype(np.int64), lons_c, lats_c
 
 def create_section(gridlon, gridlat, lonstart, latstart, lonend, latend, symmetric, boundary={"X":"periodic", "Y":"extend"}, topology="latlon"):
     """
@@ -332,16 +332,16 @@ def create_section(gridlon, gridlat, lonstart, latstart, lonend, latend, symmetr
     RETURNS:
     -------
 
-    isect, jsect, lonsect, latsect: `np.ndarray` of types (int, int, float, float) 
-        (isect, jsect) correspond to indices of vorticity points that define velocity faces.
-        (lonsect, latsect) are the corresponding longitude and latitudes.
+    i_c, j_c, lons_c, lats_c: `np.ndarray` of types (int, int, float, float) 
+        (i_c, j_c) correspond to indices of vorticity points that define velocity faces.
+        (lons_c, lats_c) are the corresponding longitude and latitudes.
     """
 
     if symmetric and boundary["X"] == "periodic":
         gridlon=gridlon[:,:-1]
         gridlat=gridlat[:,:-1]
 
-    iseg, jseg, lonseg, latseg = infer_grid_path_from_geo(
+    i_c_seg, j_c_seg, lons_c_seg, lats_c_seg = infer_grid_path_from_geo(
         lonstart,
         latstart,
         lonend,
@@ -352,10 +352,10 @@ def create_section(gridlon, gridlat, lonstart, latstart, lonend, latend, symmetr
         topology=topology
     )
     return (
-        iseg,
-        jseg,
-        lonseg,
-        latseg
+        i_c_seg,
+        j_c_seg,
+        lons_c_seg,
+        lats_c_seg
     )
 
 def infer_grid_path_from_geo(lonstart, latstart, lonend, latend, gridlon, gridlat, boundary={"X":"periodic", "Y":"extend"}, topology="latlon"):
@@ -386,9 +386,9 @@ def infer_grid_path_from_geo(lonstart, latstart, lonend, latend, gridlon, gridla
     RETURNS:
     -------
 
-    isect, jsect, lonsect, latsect: `np.ndarray` of types (int, int, float, float) 
-        (isect, jsect) correspond to indices of vorticity points that define velocity faces.
-        (lonsect, latsect) are the corresponding longitude and latitudes.
+    i_c, j_c, lons_c, lats_c: `np.ndarray` of types (int, int, float, float) 
+        (i_c, j_c) correspond to indices of vorticity points that define velocity faces.
+        (lons_c, lats_c) are the corresponding longitude and latitudes.
     """
 
     istart, jstart = find_closest_grid_point(
@@ -403,7 +403,7 @@ def infer_grid_path_from_geo(lonstart, latstart, lonend, latend, gridlon, gridla
         gridlon,
         gridlat
     )
-    iseg, jseg, lonseg, latseg = infer_grid_path(
+    i_c_seg, j_c_seg, lons_c_seg, lats_c_seg = infer_grid_path(
         istart,
         jstart,
         iend,
@@ -414,7 +414,7 @@ def infer_grid_path_from_geo(lonstart, latstart, lonend, latend, gridlon, gridla
         topology=topology
     )
 
-    return iseg, jseg, lonseg, latseg
+    return i_c_seg, j_c_seg, lons_c_seg, lats_c_seg
 
 
 def infer_grid_path(i1, j1, i2, j2, gridlon, gridlat, boundary={"X":"periodic", "Y":"extend"}, topology="latlon"):
@@ -446,10 +446,10 @@ def infer_grid_path(i1, j1, i2, j2, gridlon, gridlat, boundary={"X":"periodic", 
     RETURNS:
     -------
 
-    iseg, jseg: list of int
+    i_c_seg, j_c_seg: list of int
         list of (i,j) pairs bounded by (i1, j1) and (i2, j2)
-    lonseg, latseg: list of float
-        corresponding longitude and latitude for iseg, jseg
+    lons_c_seg, lats_c_seg: list of float
+        corresponding longitude and latitude for i_c_seg, j_c_seg
     """
     ny, nx = gridlon.shape
     
@@ -466,8 +466,8 @@ def infer_grid_path(i1, j1, i2, j2, gridlon, gridlat, boundary={"X":"periodic", 
     i = i1
     j = j1
 
-    iseg = [i]  # add first point to list of points
-    jseg = [j]  # add first point to list of points
+    i_c_seg = [i]  # add first point to list of points
+    j_c_seg = [j]  # add first point to list of points
 
     # iterate through the grid path steps until we reach end of section
     ct = 0 # grid path step counter
@@ -577,18 +577,18 @@ def infer_grid_path(i1, j1, i2, j2, gridlon, gridlat, boundary={"X":"periodic", 
         j = j_next
         i = i_next
 
-        iseg.append(i)
-        jseg.append(j)
+        i_c_seg.append(i)
+        j_c_seg.append(j)
         
         ct+=1
 
     # create lat/lon vectors from i,j pairs
-    lonseg = []
-    latseg = []
-    for jj, ji in zip(jseg, iseg):
-        lonseg.append(gridlon[jj, ji])
-        latseg.append(gridlat[jj, ji])
-    return np.array(iseg), np.array(jseg), np.array(lonseg), np.array(latseg)
+    lons_c_seg = []
+    lats_c_seg = []
+    for jj, ji in zip(j_c_seg, i_c_seg):
+        lons_c_seg.append(gridlon[jj, ji])
+        lats_c_seg.append(gridlat[jj, ji])
+    return np.array(i_c_seg), np.array(j_c_seg), np.array(lons_c_seg), np.array(lats_c_seg)
 
 
 def find_closest_grid_point(lon, lat, gridlon, gridlat):

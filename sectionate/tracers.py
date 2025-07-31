@@ -12,13 +12,13 @@ from .gridutils import (
 def extract_tracer(
     name,
     grid,
-    isec,
-    jsec,
+    i_c,
+    j_c,
     sect_coord="sect"
     ):
     """
     Extract tracer data on cell thickness grid along the grid path
-    of (isec, jsec) for plotting.
+    of (i_c, j_c) for plotting.
 
     PARAMETERS:
     -----------
@@ -26,9 +26,9 @@ def extract_tracer(
         name of variable in `grid._ds`
     grid: xgcm.Grid
         grid describing model and containing data
-    isec: int
+    i_c: int
         vorticity point indices along 'X' dimension 
-    jsec: int
+    j_c: int
         vorticity point indices along 'Y' dimension
     sect_coord: str
         Name of the dimension describing along-section data in the output. Default: 'sect'.
@@ -44,7 +44,7 @@ def extract_tracer(
     symmetric = check_symmetric(grid)
     
     # get indices of UV points from broken line
-    uvindices = uvindices_from_qindices(grid, isec, jsec)
+    uvindices = uvindices_from_qindices(grid, i_c, j_c)
         
     section = xr.Dataset()
     section["i"] = xr.DataArray(uvindices["i"], dims=sect_coord)
