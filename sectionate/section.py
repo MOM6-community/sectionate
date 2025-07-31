@@ -104,11 +104,16 @@ class GriddedSection(Section):
     section [sectionate.Section] -- named Sectionate section
     grid [xgcm.Grid] -- ocean model grid object
 
+    Keyword Arguments
+    -----------------
+    i_c [list or np.ndarray] -- x corner indices
+    j_c [list or np.ndarray] -- y corner indices
+
     Returns
     -------
     instance of GriddedSection
     """
-    def __init__(self, section, grid):
+    def __init__(self, section, grid, i_c=None, j_c=None):
         super().__init__(
             section.name,
             section.coords,
@@ -116,7 +121,11 @@ class GriddedSection(Section):
             parents = section.parents
         )
         self.grid = grid
-        self.grid_section()
+        if isinstance(i_c, (list, np.ndarray)) & isinstance(j_c, (list, np.ndarray)):
+            self.i_c = i_c
+            self.j_c = j_c
+        else:
+            self.grid_section()
 
     def grid_section(self, **kwargs):
         """Pass this Section's coordinates to sectionate.grid_section
