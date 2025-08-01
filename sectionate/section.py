@@ -53,7 +53,7 @@ class Section():
         else:
             raise ValueError("coords must be a 2-tuple of lists/arrays or a list of 2-tuples")
             
-        self.children = children
+        self.children = children.copy() # need this to be a copy or get a recursion error in __repr__...
         self.parent = parent
         self.save = {}
 
