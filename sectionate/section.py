@@ -149,7 +149,7 @@ class GriddedSection(Section):
     
     def copy(self):
         """Creates a copy of a GriddedSection, with deep copies of all attributes except the grid."""
-        super.copy()
+        super().copy()
         self.i_c = self.i_c.copy()
         self.j_c = self.j_c.copy()
 
