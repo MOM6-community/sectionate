@@ -146,6 +146,13 @@ class GriddedSection(Section):
         )
         
         return self.i_c, self.j_c, self.lons_c, self.lats_c
+    
+    def copy(self):
+        """Creates a copy of a GriddedSection, with deep copies of all attributes except the grid."""
+        super.copy()
+        self.i_c = self.i_c.copy()
+        self.j_c = self.j_c.copy()
+
 
 def join_sections(name, *sections, **kwargs):
     """
