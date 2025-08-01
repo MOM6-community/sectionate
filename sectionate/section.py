@@ -5,7 +5,7 @@ from .gridutils import get_geo_corners, check_symmetric
 
 class Section():
     """A named hydrographic section"""
-    def __init__(self, name, coords, children = {}, parents = {}):
+    def __init__(self, name, coords, children = {}, parent = {}):
         """Initiate named hydrographic section
 
         Arguments
@@ -27,7 +27,7 @@ class Section():
             This attribute will generally be populated automatically from
             the function `join_sections`.
 
-        parents [mapping from str to Section (default: {})] -- TO DO
+        parent [Section (default: None)] -- TO DO
 
         Returns
         -------
@@ -54,7 +54,7 @@ class Section():
             raise ValueError("coords must be a 2-tuple of lists/arrays or a list of 2-tuples")
             
         self.children = children.copy()
-        self.parents = parents.copy()
+        self.parent = parent.copy()
         self.save = {}
 
     def reverse(self):
@@ -73,7 +73,7 @@ class Section():
             self.name,
             self.coords,
             children=self.children,
-            parents=self.parents
+            parent=self.parent
         )
         section.save = self.save.copy()
         return section
@@ -118,7 +118,7 @@ class GriddedSection(Section):
             section.name,
             section.coords,
             children = section.children,
-            parents = section.parents
+            parent = section.parent
         )
         self.grid = grid
         if isinstance(i_c, (list, np.ndarray)) & isinstance(j_c, (list, np.ndarray)):
