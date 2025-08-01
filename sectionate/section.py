@@ -53,8 +53,8 @@ class Section():
         else:
             raise ValueError("coords must be a 2-tuple of lists/arrays or a list of 2-tuples")
             
-        self.children = children.copy()
-        self.parent = parent.copy() if parent is not None else parent
+        self.children = children
+        self.parent = parent
         self.save = {}
 
     def reverse(self):
