@@ -80,8 +80,8 @@ def initialize_minimal_spherical_grid():
         'Y': {'outer': 'yq', 'center': 'yh'}
     }
     boundary = {
-        'X': 'periodic',
-        'Y': 'extend'
+        'X': "periodic",
+        'Y': "extend"
     }
     grid = xgcm.Grid(ds, coords=coords, boundary=boundary, autoparse_metadata=False)
     return grid

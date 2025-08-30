@@ -19,7 +19,7 @@ coords = {
 }
 boundary = {
     'X': 'periodic',
-    'Y': 'periodic'
+    'Y': 'extend'
 }
 grid = xgcm.Grid(ds, coords=coords, boundary=boundary, autoparse_metadata=False)
 

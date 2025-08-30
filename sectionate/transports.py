@@ -6,7 +6,7 @@ import dask
 from .gridutils import check_symmetric, coord_dict, get_geo_corners
 from .section import distance_on_unit_sphere
 
-def uvindices_from_qindices(grid, isec, jsec):
+def uvindices_from_qindices(grid, i_c, j_c):
     """
     Find the `grid` indices of the N-1 velocity points defined by the consecutive indices of
     N vorticity points. Follows MOM6 conventions (https://mom6.readthedocs.io/en/main/api/generated/pages/Horizontal_Indexing.html),
@@ -16,9 +16,9 @@ def uvindices_from_qindices(grid, isec, jsec):
     -----------
     grid: xgcm.Grid
         Grid object describing ocean model grid and containing data variables
-    isec: int
+    i_c: int
         vorticity point indices along "X" dimension 
-    jsec: int
+    j_c: int
         vorticity point indices along "Y" dimension
 
     RETURNS:
@@ -31,7 +31,7 @@ def uvindices_from_qindices(grid, isec, jsec):
           - "nward" : True if point was passed through while going in positive "j"-index direction
           - "eward" : True if point was passed through while going in positive "i"-index direction
     """
-    nsec = len(isec)
+    nsec = len(i_c)
     uvindices = {
         "var":np.zeros(nsec-1, dtype="<U2"),
         "i":np.zeros(nsec-1, dtype=np.int64),
@@ -41,16 +41,16 @@ def uvindices_from_qindices(grid, isec, jsec):
     }
     symmetric = check_symmetric(grid)
     for k in range(0, nsec-1):
-        zonal = not(jsec[k+1] != jsec[k])
-        eward = isec[k+1] > isec[k]
-        nward = jsec[k+1] > jsec[k]
+        zonal = not(j_c[k+1] != j_c[k])
+        eward = i_c[k+1] > i_c[k]
+        nward = j_c[k+1] > j_c[k]
         # Handle corner cases for wrapping boundaries
-        if (isec[k+1] - isec[k])>1: eward = False
-        elif (isec[k+1] - isec[k])<-1: eward = True
+        if (i_c[k+1] - i_c[k])>1: eward = False
+        elif (i_c[k+1] - i_c[k])<-1: eward = True
         uvindex = {
             "var": "V" if zonal else "U", 
-            "i": isec[k+(1 if not(eward) and zonal else 0)],
-            "j": jsec[k+(1 if not(nward) and not(zonal) else 0)],
+            "i": i_c[k+(1 if not(eward) and zonal else 0)],
+            "j": j_c[k+(1 if not(nward) and not(zonal) else 0)],
             "nward": nward,
             "eward": eward,
         }
@@ -159,7 +159,7 @@ def uvcoords_from_uvindices(grid, uvindices):
         lats[p] = lat
     return lons, lats
     
-def uvcoords_from_qindices(grid, isec, jsec):
+def uvcoords_from_qindices(grid, i_c, j_c):
     """
     Directly finds coordinates of velocity points from vorticity point indices, wrapping other functions.
 
@@ -167,9 +167,9 @@ def uvcoords_from_qindices(grid, isec, jsec):
     -----------
     grid: xgcm.Grid
         Grid object describing ocean model grid and containing data variables
-    isec: int
+    i_c: int
         vorticity point indices along "X" dimension 
-    jsec: int
+    j_c: int
         vorticity point indices along "Y" dimension
 
     RETURNS:
@@ -179,13 +179,13 @@ def uvcoords_from_qindices(grid, isec, jsec):
     """
     return uvcoords_from_uvindices(
         grid,
-        uvindices_from_qindices(grid, isec, jsec),
+        uvindices_from_qindices(grid, i_c, j_c),
     )
 
 def convergent_transport(
     grid,
-    isec,
-    jsec,
+    i_c,
+    j_c,
     utr="umo",
     vtr="vmo",
     layer="z_l",
@@ -206,9 +206,9 @@ def convergent_transport(
     -----------
     grid: xgcm.Grid
         Grid object describing ocean model grid and containing data variables. Must include variables "utr" and "vtr" (see kwargs).
-    isec: int
+    i_c: int
         Vorticity point indices along "X" dimension. 
-    jsec: int
+    j_c: int
         Vorticity point indices along "Y" dimension.
     utr: str
         Name of "X"-direction tracer transport
@@ -245,8 +245,8 @@ def convergent_transport(
         if layer.replace("l", "i") != interface:
             raise ValueError("Inconsistent layer and interface grid variables!")
             
-    uvindices = uvindices_from_qindices(grid, isec, jsec)
-    uvcoords = uvcoords_from_qindices(grid, isec, jsec)
+    uvindices = uvindices_from_qindices(grid, i_c, j_c)
+    uvcoords = uvcoords_from_qindices(grid, i_c, j_c)
     
     sect = xr.Dataset()
     sect = sect.assign_coords({
@@ -279,8 +279,8 @@ def convergent_transport(
         coords = coord_dict(grid)
         geo_corners = get_geo_corners(grid)
         idx = {
-            coords["X"]["corner"]:xr.DataArray(isec, dims=("pt",)),
-            coords["Y"]["corner"]:xr.DataArray(jsec, dims=("pt",)),
+            coords["X"]["corner"]:xr.DataArray(i_c, dims=("pt",)),
+            coords["Y"]["corner"]:xr.DataArray(j_c, dims=("pt",)),
         }
         counterclockwise = is_section_counterclockwise(
             geo_corners["X"].isel(idx).values,
@@ -366,12 +366,12 @@ def convergent_transport(
 
     return dsout
 
-def is_section_counterclockwise(lons, lats, geometry="spherical"):
+def is_section_counterclockwise(lons_c, lats_c, geometry="spherical"):
     """
-    Check if the polygon defined by the consecutive (lons, lats) is `counterclockwise` (with respect to a given
+    Check if the polygon defined by the consecutive (lons_c, lats_c) is `counterclockwise` (with respect to a given
     `geometry`). Under the hood, it does this by checking whether the signed area (or determinant) of the polygon
     is negative (counterclockwise) or positive (clockwise). This is only a meaningful calculation if the section
-    is closed, i.e. (lons[-1], lats[-1]) == (lons[0], lats[0]), and therefore defines a polygon.
+    is closed, i.e. (lons_c[-1], lats_c[-1]) == (lons_c[0], lats_c[0]), and therefore defines a polygon.
     
     For the case `geometry="spherical"`, the periodic nature of the longitude coordinate complicates things;
     instead of working in spherical coordinates, we use a South-Pole stereographic projection of the surface of the sphere
@@ -379,8 +379,8 @@ def is_section_counterclockwise(lons, lats, geometry="spherical"):
 
     PARAMETERS:
     -----------
-    lons : np.ndarray(float), in degrees
-    lats : np.ndarray(float), in degrees
+    lons_c : np.ndarray(float), longitude of corner points, in degrees
+    lats_c : np.ndarray(float), latitude of corner points, in degrees
     geometry : str
         Geometry to use to check orientation of the section. Supported geometries are ["cartesian", "spherical"].
         Default: "spherical".
@@ -389,15 +389,15 @@ def is_section_counterclockwise(lons, lats, geometry="spherical"):
     --------
     counterclockwise : bool
     """
-    if distance_on_unit_sphere(lons[0], lats[0], lons[-1], lats[-1]) > 10.:
+    if distance_on_unit_sphere(lons_c[0], lats_c[0], lons_c[-1], lats_c[-1]) > 10.:
         warnings.warn("The orientation of open sections is ambiguous–verify that it matches expectations!")
-        lons = np.append(lons, lons[0])
-        lats = np.append(lats, lats[0])
+        lons_c = np.append(lons_c, lons_c[0])
+        lats_c = np.append(lats_c, lats_c[0])
     
     if geometry == "spherical":
-        X, Y = stereographic_projection(lons, lats)
+        X, Y = stereographic_projection(lons_c, lats_c)
     elif geometry == "cartesian":
-        X, Y = lons, lats
+        X, Y = lons_c, lats_c
     else:
         raise ValueError("""Only "spherical" and "cartesian" geometries are currently supported.""")
     
