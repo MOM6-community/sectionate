@@ -36,3 +36,6 @@ allow-direct-references = true
 
 [tool.hatch.version]
 path = "sectionate/version.py"
+
+[tool.hatch.build]
+exclude = ["examples/**", "data/**"]
