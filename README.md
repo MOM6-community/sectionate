@@ -8,10 +8,10 @@ Quick Start Guide
 
 **For users: minimal installation within an existing environment**
 ```bash
-pip install git+https://github.com/MOM6-community/sectionate.git@master
+pip install sectionate
 ```
 
-**For developers: installing from scratch using `conda`**
+**For developers: installing dependencies from scratch using `conda`**
 ```bash
 git clone https://github.com/MOM6-community/sectionate.git
 cd sectionate
