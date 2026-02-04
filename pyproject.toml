@@ -7,7 +7,7 @@ authors = [
 ]
 description = "A package to sample grid-consistent sections from ocean model outputs"
 readme = "README.md"
-requires-python = ">=3.8"
+requires-python = ">=3.12"
 classifiers = [
     "Programming Language :: Python :: 3",
     "License :: OSI Approved :: GNU General Public License v3 (GPLv3)",
