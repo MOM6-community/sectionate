@@ -1,6 +1,7 @@
 name: test_env_sectionate
 channels:
   - conda-forge
+  - nodefaults
 dependencies:
   - python>=3.12
   - pytest
