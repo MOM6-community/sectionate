@@ -14,7 +14,7 @@ master_doc = "index"
 # https://www.sphinx-doc.org/en/master/usage/configuration.html#project-information
 
 
-project = 'xbudget'
+project = 'sectionate'
 copyright = '2026, Henri Drake'
 author = 'Henri Drake'
 
