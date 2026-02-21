@@ -1,6 +1,8 @@
 # sectionate
 A package to sample grid-consistent sections from ocean model outputs
 
+(Currently only supports structured grids.)
+
 [![PyPI](https://badge.fury.io/py/sectionate.svg)](https://badge.fury.io/py/sectionate)
 [![Conda Version](https://img.shields.io/conda/vn/conda-forge/sectionate)](https://anaconda.org/conda-forge/sectionate)
 [![Docs](https://readthedocs.org/projects/sectionate/badge/?version=latest)](https://sectionate.readthedocs.io/en/latest/)
