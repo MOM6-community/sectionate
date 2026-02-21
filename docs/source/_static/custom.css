@@ -1,0 +1,39 @@
+/* Responsive layout widening for Alabaster
+   - On small screens: use full width (with padding)
+   - On typical laptops: ~1100–1250px content area
+   - On big screens: cap so lines don't get absurdly long
+*/
+
+div.document {
+  /* Total doc block width (sidebar + content) */
+  width: min(96vw, 1400px);
+  margin: 0 auto;
+}
+
+/* Keep the main content comfortable: cap line length */
+div.body {
+  /* body width within the document area */
+  max-width: 900px;
+}
+
+/* Give the sidebar a stable width; let it wrap below on small screens */
+div.sphinxsidebar {
+  width: 270px;
+}
+
+/* On narrower screens, don't force sidebar + body side-by-side */
+@media (max-width: 900px) {
+  div.document {
+    width: 96vw;
+  }
+  div.sphinxsidebar {
+    float: none;
+    width: auto;
+  }
+  div.bodywrapper {
+    margin: 0;
+  }
+  div.body {
+    max-width: none;
+  }
+}
