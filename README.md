@@ -1,14 +1,19 @@
 # sectionate
 A package to sample grid-consistent sections from ocean model outputs
 
-[![Binder](https://mybinder.org/badge_logo.svg)](https://mybinder.org/v2/gh/raphaeldussin/sectionate/master)
+(Currently only supports structured grids.)
+
+[![PyPI](https://badge.fury.io/py/sectionate.svg)](https://badge.fury.io/py/sectionate)
+[![Conda Version](https://img.shields.io/conda/vn/conda-forge/sectionate)](https://anaconda.org/conda-forge/sectionate)
+[![Docs](https://readthedocs.org/projects/sectionate/badge/?version=latest)](https://sectionate.readthedocs.io/en/latest/)
+[![License](https://img.shields.io/github/license/MOM6-Community/sectionate)](https://github.com/MOM6-Community/sectionate)
 
 Quick Start Guide
 -----------------
 
 **For users: minimal installation within an existing environment**
 ```bash
-pip install sectionate
+conda install sectionate
 ```
 
 **For developers: installing dependencies from scratch using `conda`**
