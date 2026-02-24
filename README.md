@@ -13,7 +13,7 @@ Quick Start Guide
 
 **For users: minimal installation within an existing environment**
 ```bash
-conda install sectionate
+conda install -c conda-forge sectionate
 ```
 
 **For developers: installing dependencies from scratch using `conda`**
