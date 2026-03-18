@@ -30,7 +30,7 @@ def get_geo_corners(grid):
         axis: [
             coords[c] for c in coords
             if (
-                (geoc in c) and
+                (geoc in c.lower()) and
                 (dims["X"] in coords[c].dims) and
                 (dims["Y"] in coords[c].dims)
             )
@@ -38,7 +38,7 @@ def get_geo_corners(grid):
         for axis, geoc in zip(["X", "Y"], ["lon", "lat"])
     }
     if any([len(v) == 0 for (k,v) in geo_coord_dict.items()]):
-        raise ValueError("grid._ds must contain two-dimensional coordinates, lon(X,Y) and lat(X,Y), consistent with grid.coords")
+        raise ValueError("""grid._ds must contain two-dimensional ("X", "Y") coordinates including the strings "lon" and "lat", consistent with grid.coords.""")
     return {k:v[0] for (k,v) in geo_coord_dict.items()}
     
 def coord_dict(grid):
