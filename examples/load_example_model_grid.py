@@ -8,6 +8,7 @@ def download_MOM6_example_data():
     # download the data
     url = 'https://zenodo.org/record/15384910/files/'
     file_name = 'MOM6_global_example_sigma2_budgets_v0_0_6.nc'
+    os.makedirs("../data", exist_ok=True)
     destination_path = f"../data/{file_name}"
     if not os.path.exists(destination_path):
         print(f"File '{file_name}' being downloaded to {destination_path}.")

@@ -15,3 +15,5 @@ dependencies:
   - nbsphinx
   - ipykernel
   - pip
+  - xarray
+  - dask

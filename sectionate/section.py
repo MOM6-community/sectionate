@@ -5,7 +5,7 @@ from .gridutils import get_geo_corners, check_symmetric
 
 class Section():
     """A named hydrographic section"""
-    def __init__(self, name, coords, children = {}, parent = None):
+    def __init__(self, name, coords, children = {}, parent = None, curve = "great circle"):
         """Initiate named hydrographic section
 
         Arguments
@@ -28,6 +28,11 @@ class Section():
             the function `join_sections`.
 
         parent [Section (default: None)] -- TO DO
+
+        curve [str] -- type of curve between coordinate endpoints.
+            If "great circle", the section is a geodesic.
+            If "latitude circle", the section is at constant latitude.
+            Default: "great circle"
 
         Returns
         -------
@@ -55,6 +60,7 @@ class Section():
             
         self.children = children.copy() # need this to be a copy or get a recursion error in __repr__...
         self.parent = parent
+        self.curve = curve
         self.save = {}
 
     def reverse(self):
@@ -73,7 +79,8 @@ class Section():
             self.name,
             self.coords,
             children=self.children,
-            parent=self.parent
+            parent=self.parent,
+            curve=self.curve
         )
         section.save = self.save.copy()
         return section
@@ -113,19 +120,20 @@ class GriddedSection(Section):
     -------
     instance of GriddedSection
     """
-    def __init__(self, section, grid, i_c=None, j_c=None):
+    def __init__(self, section, grid, i_c=None, j_c=None, **kwargs):
         super().__init__(
             section.name,
             section.coords,
             children = section.children,
-            parent = section.parent
+            parent = section.parent,
+            curve = section.curve
         )
         self.grid = grid
         if isinstance(i_c, (list, np.ndarray)) & isinstance(j_c, (list, np.ndarray)):
             self.i_c = i_c
             self.j_c = j_c
         else:
-            self.grid_section()
+            self.grid_section(**kwargs)
 
     def grid_section(self, **kwargs):
         """Pass this Section's coordinates to sectionate.grid_section
@@ -142,6 +150,7 @@ class GriddedSection(Section):
             self.grid,
             self.lons_c,
             self.lats_c,
+            curve=self.curve,
             **kwargs
         )
         
@@ -212,7 +221,7 @@ def join_sections(name, *sections, **kwargs):
             
     return section
         
-def grid_section(grid, lons, lats, topology="latlon"):
+def grid_section(grid, lons, lats, topology="latlon", curve="great circle"):
     """
     Compute composite section along model `grid` velocity faces that approximates geodesic paths
     between consecutive points defined by (lons, lats).
@@ -221,14 +230,21 @@ def grid_section(grid, lons, lats, topology="latlon"):
     ----------
     grid: xgcm.Grid
         Object describing the geometry of the ocean model grid, including metadata about variable names for
-        the staggered C-grid dimensions and c oordinates.
+        the staggered C-grid dimensions and coordinates.
     lons: list or np.ndarray
         Longitudes, in degrees, of consecutive vertices defining a piece-wise geodesic section.
     lats: list or np.ndarray
         Latitudes, in degrees (in range [-90, 90]), of consecutive vertices defining a piece-wise geodesic section.
     topology: str
-        Default: "latlon". Currently only supports the following options: ["latlon", "cartesian", "MOM-tripolar"].
-        
+        Default: "latlon". The current options are 
+        - "cartesian" or "latlon": a logically rectangular grid, 
+        - "MOM-tripolar": the MOM tripolar grid,
+        - "tripolar-Tpivot": the NEMO ORCA tripolar grid pivoting on T points,
+        - "tripolar-Fpivot": the NEMO ORCA tripolar grid pivoting on F points
+    curve: str
+        The type of curve to follow between endpoints. 
+        Default: "great circle". Options are ["great circle", "latitude circle"].
+
     Returns
     -------
     i_c, j_c, lons_c, lats_c: `np.ndarray` of types (int, int, float, float) 
@@ -243,7 +259,8 @@ def grid_section(grid, lons, lats, topology="latlon"):
         lats,
         check_symmetric(grid),
         boundary={ax:grid.axes[ax]._boundary for ax in grid.axes},
-        topology=topology
+        topology=topology,
+        curve=curve
     )
 
 def create_section_composite(
@@ -253,7 +270,8 @@ def create_section_composite(
     lats,
     symmetric,
     boundary={"X":"periodic", "Y":"extend"},
-    topology="latlon"
+    topology="latlon",
+    curve="great circle"
     ):
     """
     Compute composite section along velocity faces, as defined by coordinates of vorticity points (gridlon, gridlat),
@@ -275,7 +293,14 @@ def create_section_composite(
     boundary: dictionary mapping grid axis to boundary condition
         Default: {"X":"periodic", "Y":"extend"}. Set to {"X":"extend", "Y":"extend"} if using a non-periodic regional domain.
     topology: str
-        Default: "latlon". Currently only supports the following options: ["latlon", "cartesian", "MOM-tripolar"].
+        Default: "latlon". The current options are 
+        - "cartesian" or "latlon": a logically rectangular grid, 
+        - "MOM-tripolar": the MOM tripolar grid,
+        - "tripolar-Tpivot": the NEMO ORCA tripolar grid pivoting on T points,
+        - "tripolar-Fpivot": the NEMO ORCA tripolar grid pivoting on F points
+    curve: str
+        The type of curve to follow between endpoints. 
+        Default: "great circle". Options are ["great circle", "latitude circle"].
 
     RETURNS:
     -------
@@ -303,7 +328,8 @@ def create_section_composite(
             lats[k + 1],
             symmetric,
             boundary=boundary,
-            topology=topology
+            topology=topology,
+            curve=curve
         )
 
         i_c = np.concatenate([i_c, i_c_seg[:-1]], axis=0)
@@ -318,7 +344,7 @@ def create_section_composite(
 
     return i_c.astype(np.int64), j_c.astype(np.int64), lons_c, lats_c
 
-def create_section(gridlon, gridlat, lonstart, latstart, lonend, latend, symmetric, boundary={"X":"periodic", "Y":"extend"}, topology="latlon"):
+def create_section(gridlon, gridlat, lonstart, latstart, lonend, latend, symmetric, boundary={"X":"periodic", "Y":"extend"}, topology="latlon", curve="great circle"):
     """
     Compute a section segment along velocity faces, as defined by coordinates of vorticity points (gridlon, gridlat),
     that most closely approximates the geodesic path between points (lonstart, latstart) and (lonend, latend).
@@ -343,8 +369,15 @@ def create_section(gridlon, gridlat, lonstart, latstart, lonend, latend, symmetr
     boundary: dictionary mapping grid axis to boundary condition
         Default: {"X":"periodic", "Y":"extend"}. Set to {"X":"extend", "Y":"extend"} if using a non-periodic regional domain.
     topology: str
-        Default: "latlon". Currently only supports the following options: ["latlon", "cartesian", "MOM-tripolar"].
-
+        Default: "latlon". The current options are 
+        - "cartesian" or "latlon": a logically rectangular grid, 
+        - "MOM-tripolar": the MOM tripolar grid,
+        - "tripolar-Tpivot": the NEMO ORCA tripolar grid pivoting on T points,
+        - "tripolar-Fpivot": the NEMO ORCA tripolar grid pivoting on F points
+    curve: str
+        The type of curve to follow between endpoints. 
+        Default: "great circle". Options are ["great circle", "latitude circle"].
+    
     RETURNS:
     -------
 
@@ -365,7 +398,8 @@ def create_section(gridlon, gridlat, lonstart, latstart, lonend, latend, symmetr
         gridlon,
         gridlat,
         boundary=boundary,
-        topology=topology
+        topology=topology,
+        curve=curve
     )
     return (
         i_c_seg,
@@ -374,7 +408,7 @@ def create_section(gridlon, gridlat, lonstart, latstart, lonend, latend, symmetr
         lats_c_seg
     )
 
-def infer_grid_path_from_geo(lonstart, latstart, lonend, latend, gridlon, gridlat, boundary={"X":"periodic", "Y":"extend"}, topology="latlon"):
+def infer_grid_path_from_geo(lonstart, latstart, lonend, latend, gridlon, gridlat, boundary={"X":"periodic", "Y":"extend"}, topology="latlon", curve="great circle"):
     """
     Find the grid indices (and coordinates) of vorticity points that most closely approximates
     the geodesic path between points (lonstart, latstart) and (lonend, latend).
@@ -397,7 +431,14 @@ def infer_grid_path_from_geo(lonstart, latstart, lonend, latend, gridlon, gridla
     boundary: dictionary mapping grid axis to boundary condition
         Default: {"X":"periodic", "Y":"extend"}. Set to {"X":"extend", "Y":"extend"} if using a non-periodic regional domain.
     topology: str
-        Default: "latlon". Currently only supports the following options: ["latlon", "cartesian", "MOM-tripolar"].
+        Default: "latlon". The current options are 
+        - "cartesian" or "latlon": a logically rectangular grid, 
+        - "MOM-tripolar": the MOM tripolar grid,
+        - "tripolar-Tpivot": the NEMO ORCA tripolar grid pivoting on T points,
+        - "tripolar-Fpivot": the NEMO ORCA tripolar grid pivoting on F points
+    curve: str
+        The type of curve to follow between endpoints. 
+        Default: "great circle". Options are ["great circle", "latitude circle"].
 
     RETURNS:
     -------
@@ -427,13 +468,14 @@ def infer_grid_path_from_geo(lonstart, latstart, lonend, latend, gridlon, gridla
         gridlon,
         gridlat,
         boundary=boundary,
-        topology=topology
+        topology=topology,
+        curve=curve
     )
 
     return i_c_seg, j_c_seg, lons_c_seg, lats_c_seg
 
 
-def infer_grid_path(i1, j1, i2, j2, gridlon, gridlat, boundary={"X":"periodic", "Y":"extend"}, topology="latlon"):
+def infer_grid_path(i1, j1, i2, j2, gridlon, gridlat, boundary={"X":"periodic", "Y":"extend"}, topology="latlon", curve="great circle"):
     """
     Find the grid indices (and coordinates) of vorticity points that most closely approximate
     the geodesic path between points (gridlon[j1,i1], gridlat[j1,i1]) and
@@ -457,7 +499,14 @@ def infer_grid_path(i1, j1, i2, j2, gridlon, gridlat, boundary={"X":"periodic", 
     boundary: dictionary mapping grid axis to boundary condition
         Default: {"X":"periodic", "Y":"extend"}. Set to {"X":"extend", "Y":"extend"} if using a non-periodic regional domain.
     topology: str
-        Default: "latlon". Currently only supports the following options: ["latlon", "cartesian", "MOM-tripolar"].
+        Default: "latlon". The current options are 
+        - "cartesian" or "latlon": a logically rectangular grid, 
+        - "MOM-tripolar": the MOM tripolar grid,
+        - "tripolar-Tpivot": the NEMO ORCA tripolar grid pivoting on T points,
+        - "tripolar-Fpivot": the NEMO ORCA tripolar grid pivoting on F points
+    curve: str
+        The type of curve to follow between endpoints. 
+        Default: "great circle". Options are ["great circle", "latitude circle"].
 
     RETURNS:
     -------
@@ -482,8 +531,25 @@ def infer_grid_path(i1, j1, i2, j2, gridlon, gridlat, boundary={"X":"periodic", 
     i = i1
     j = j1
 
+    # confirm i is within the bounds of the grid
+    if i < 0 or i > nx-1: 
+        raise RuntimeError(f"Expected 0 <= i < nx = {nx}; found i = {i}")
+
     i_c_seg = [i]  # add first point to list of points
     j_c_seg = [j]  # add first point to list of points
+
+    # Pick functions to measure closeness of candidate point to
+    # (a) desired curve between (lon1, lat1) and (lon2, lat2), 
+    # (b) the end point (lon2, lat2).
+    if curve == "great circle":
+        dist_to_curve = spherical_angle
+        # dist_to_curve = distance_to_endpoints  # alternative
+        dist_to_end = distance_on_unit_sphere
+    elif curve == "latitude circle":
+        dist_to_curve = _latitude_abs_difference
+        dist_to_end = _longitude_monotonic_distance
+    else:
+        raise ValueError(f"Curve must be 'great circle' or 'latitude circle'. Got {curve}")
 
     # iterate through the grid path steps until we reach end of section
     ct = 0 # grid path step counter
@@ -491,16 +557,15 @@ def infer_grid_path(i1, j1, i2, j2, gridlon, gridlat, boundary={"X":"periodic", 
     # Grid-agnostic algorithm:
     # First, find all four neighbors (subject to grid topology)
     # Second, throw away any that are further from the destination than the current point
-    # Third, go to the valid neighbor that has the smallest angle from the arc path between the
-    # start and end points (the shortest geodesic path)
+    # Third, go to the valid neighbor that is closest to the desired curve between the
+    # start and end points.
     j_prev, i_prev = j,i
-    while (i%nx != i2) or (j != j2):
-                
+    while (i != i2) or (j != j2):
         # safety precaution: exit after taking enough steps to have crossed the entire model grid
         if ct > (nx+ny+1):
             raise RuntimeError(f"Should have reached the endpoint by now.")
 
-        d_current = distance_on_unit_sphere(
+        d_current = dist_to_end(
                 gridlon[j,i],
                 gridlat[j,i],
                 lon2,
@@ -520,67 +585,63 @@ def infer_grid_path(i1, j1, i2, j2, gridlon, gridlat, boundary={"X":"periodic", 
         
         if topology=="MOM-tripolar":
             if j!=ny-1:
-                up = (j+1, i%nx)
+                up = (j+1, i)
             else:
-                up = (j-1, (nx-1) - (i%nx))
-                
+                up = (j-1, nx-1-i)
+        elif topology=="tripolar-Fpivot":
+            if j!=ny-1:
+                up = (j+1, i)
+            else:
+                up = (j-1, (nx-2-i) % nx)
+        elif topology=="tripolar-Tpivot":
+            if j!=ny-1:
+                up = (j+1, i)
+            else:
+                up = (j-2, nx-1-i)
         elif topology=="cartesian" or topology=="latlon":
                 up = (np.clip(j+1, 0, ny-1), i)
         else:
-            raise ValueError("Only 'cartesian', 'latlon', and 'MOM-tripolar' grid topologies are currently supported.")
+            raise ValueError(f"Only 'cartesian', 'latlon', and 'MOM-tripolar', 'tripolar-Tpivot', and 'tripolar-Fpivot' grid topologies are currently supported. Got {topology}")
         
         neighbors = [right, left, down, up]
 
         j_next, i_next = None, None
-        smallest_angle = np.inf
+        min_d_to_curve = np.inf
         d_list = []
         for (_j, _i) in neighbors:
-            d = distance_on_unit_sphere(
+            d = dist_to_end(
                 gridlon[_j,_i],
                 gridlat[_j,_i],
                 lon2,
                 lat2
             )
-            d_list.append(d/d_current)
+            d_list.append(d)
             if d < d_current:
                 if d==0.: # We're done!
                     j_next, i_next = _j, _i
-                    smallest_angle = 0.
+                    min_d_to_curve = 0.
                     break
-                # Instead of simply moving to the point that gets us closest to the target,
-                # a more robust approach is to pick, among the points that do get us closer,
-                # the one that most closely follows the great circle between the start and
-                # end points of the section. We average the angles relative to both end
-                # points so that the shortest path is unique and insensitive to which direction
-                # the section is traveled.
                 else:
-                    angle1 = spherical_angle(
-                        lon2,
-                        lat2,
-                        lon1,
-                        lat1,
-                        gridlon[_j,_i],
-                        gridlat[_j,_i],
-                    )
-                    angle2 = spherical_angle(
-                        lon1,
-                        lat1,
-                        lon2,
-                        lat2,
-                        gridlon[_j,_i],
-                        gridlat[_j,_i],
-                    )
-                    angle = (angle1+angle2)/2.
-                    if angle < smallest_angle:
+                    # Instead of simply moving to the point that gets us closest to the target,
+                    # a more robust approach is to pick, among the points that do get us closer,
+                    # the one that most closely follows the desired curve between the start and
+                    # end points of the section. We measure the closeness to the desired curve 
+                    # by considering the curve in both directions, so that the shortest path is
+                    # unique and insensitive to which direction the section is traveled.
+                    d_to_curve = (
+                          dist_to_curve(lon1, lat1, lon2, lat2, gridlon[_j,_i], gridlat[_j,_i])
+                        + dist_to_curve(lon2, lat2, lon1, lat1, gridlon[_j,_i], gridlat[_j,_i])
+                        )
+                    if d_to_curve < min_d_to_curve:
                         j_next, i_next = _j, _i
-                        smallest_angle = angle
+                        min_d_to_curve = d_to_curve
         
         # There can be some strange edge cases in which none of the neighboring points
         # actually get us closer to the target (e.g. when closing folds in the grid).
         # In these cases, simply pick the adjacent point that gets us closest, as long as
         # it was not our previous point (to avoid endless loops). This algorithm should be
         # guaranteed to always get us to the target point.
-        if (smallest_angle == np.inf) or (j_next, i_next) == (j_prev, i_prev):
+        if (min_d_to_curve == np.inf) or (j_next, i_next) == (j_prev, i_prev):
             if (j_prev, i_prev) in neighbors:
                 idx = neighbors.index((j_prev, i_prev))
                 del neighbors[idx]
@@ -598,13 +659,14 @@ def infer_grid_path(i1, j1, i2, j2, gridlon, gridlat, boundary={"X":"periodic", 
         
         ct+=1
 
-    # create lat/lon vectors from i,j pairs
-    lons_c_seg = []
-    lats_c_seg = []
-    for jj, ji in zip(j_c_seg, i_c_seg):
-        lons_c_seg.append(gridlon[jj, ji])
-        lats_c_seg.append(gridlat[jj, ji])
-    return np.array(i_c_seg), np.array(j_c_seg), np.array(lons_c_seg), np.array(lats_c_seg)
+    # Convert lists to np arrays and create lat/lon arrays from i,j pairs
+    i_c_seg = np.array(i_c_seg)
+    j_c_seg = np.array(j_c_seg)
+    lons_c_seg = np.array(len(i_c_seg), dtype=gridlon.dtype)
+    lats_c_seg = np.array(len(i_c_seg), dtype=gridlon.dtype)
+    lons_c_seg = gridlon[j_c_seg, i_c_seg]
+    lats_c_seg = gridlat[j_c_seg, i_c_seg]
+    return i_c_seg, j_c_seg, lons_c_seg, lats_c_seg
 
 
 def find_closest_grid_point(lon, lat, gridlon, gridlat):
@@ -693,6 +755,38 @@ def distance_on_unit_sphere(lon1, lat1, lon2, lat2, R=6.371e6, method="vincenty"
 
     return R * arc
 
+def distance_to_endpoints(lonA, latA, lonB, latB, lonC, latC):
+    """
+    Calculate the distance of  geodesic arcs AC and BC defined by
+    [(lonA, latA), (lonC, latC)] and [(lonB, latB), (lonC, latC)], respectively.
+
+    PARAMETERS:
+    -----------
+        lonA : float
+            Longitude of point A, in degrees
+        latA : float
+            Latitude of point A, in degrees
+        lonB : float
+            Longitude of point B, in degrees
+        latB : float
+            Latitude of point B, in degrees
+        lonC : float
+            Longitude of point C, in degrees
+        latC : float
+            Latitude of point C, in degrees
+
+    RETURNS:
+    --------
+
+    distance : float
+        Distance from A to C plus distance from B to C, in radians.
+    """
+    a = distance_on_unit_sphere(lonA, latA, lonC, latC, R=1.)
+    b = distance_on_unit_sphere(lonB, latB, lonC, latC, R=1.)
+        
+    return a + b
+
+
 def spherical_angle(lonA, latA, lonB, latB, lonC, latC):
     """
     Calculate the spherical triangle angle alpha between geodesic arcs AB and AC defined by
@@ -724,6 +818,18 @@ def spherical_angle(lonA, latA, lonB, latB, lonC, latC):
     c = distance_on_unit_sphere(lonA, latA, lonB, latB, R=1.)
         
     return np.arccos(np.clip((np.cos(a) - np.cos(b)*np.cos(c))/(np.sin(b)*np.sin(c)), -1., 1.))
+
+def _latitude_abs_difference(lonA, latA, lonB, latB, lonC, latC):
+    # Calculate the absolute value of the difference between latA and latC
+    return abs(latA - latC)
+
+def _longitude_monotonic_distance(lonA, latA, lonB, latB):
+    # Evaluate a monotonic function of the distance between lonA and lonB at the same latitude.
+    # This is the Haversine function of (lonA - lonB); 
+    # it is equivalent to f(distance_on_unit_sphere(lonA, 0, lonB, 0, R=1, method="haversine"))
+    # where f is a monotonically increasing function.
+    return np.sin(np.deg2rad((lonA - lonB) / 2)) ** 2
+
 
 def align_coords(coords1, coords2, extend=False):
     """Align coords1 and coords2 by minimizing distance between coords[-1] and coords[0]
