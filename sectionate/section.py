@@ -543,7 +543,7 @@ def infer_grid_path(i1, j1, i2, j2, gridlon, gridlat, boundary={"X":"periodic", 
     # (b) the end point (lon2, lat2).
     if curve == "great circle":
         dist_to_curve = spherical_angle
-        # dist_to_curve = distance_to_endpoints  # alternative
+        # dist_to_curve = distance_to_endpoint  # alternative to spherical_angle: sum the distance to each endpoint. Changes the results very slightly.
         dist_to_end = distance_on_unit_sphere
     elif curve == "latitude circle":
         dist_to_curve = _latitude_abs_difference
@@ -565,14 +565,14 @@ def infer_grid_path(i1, j1, i2, j2, gridlon, gridlat, boundary={"X":"periodic", 
         if ct > (nx+ny+1):
             raise RuntimeError(f"Should have reached the endpoint by now.")
 
-        d_current = dist_to_end(
+        d_to_end_current = dist_to_end(
                 gridlon[j,i],
                 gridlat[j,i],
                 lon2,
                 lat2
             )
         
-        if d_current < 1.e-12:
+        if d_to_end_current < 1.e-12:
             break
         
         if boundary["X"] == "periodic":
@@ -616,7 +616,7 @@ def infer_grid_path(i1, j1, i2, j2, gridlon, gridlat, boundary={"X":"periodic", 
                 lat2
             )
             d_list.append(d)
-            if d < d_current:
+            if d < d_to_end_current:
                 if d==0.: # We're done!
                     j_next, i_next = _j, _i
                     min_d_to_curve = 0.
@@ -662,8 +662,6 @@ def infer_grid_path(i1, j1, i2, j2, gridlon, gridlat, boundary={"X":"periodic", 
     # Convert lists to np arrays and create lat/lon arrays from i,j pairs
     i_c_seg = np.array(i_c_seg)
     j_c_seg = np.array(j_c_seg)
-    lons_c_seg = np.array(len(i_c_seg), dtype=gridlon.dtype)
-    lats_c_seg = np.array(len(i_c_seg), dtype=gridlon.dtype)
     lons_c_seg = gridlon[j_c_seg, i_c_seg]
     lats_c_seg = gridlat[j_c_seg, i_c_seg]
     return i_c_seg, j_c_seg, lons_c_seg, lats_c_seg
@@ -755,10 +753,9 @@ def distance_on_unit_sphere(lon1, lat1, lon2, lat2, R=6.371e6, method="vincenty"
 
     return R * arc
 
-def distance_to_endpoints(lonA, latA, lonB, latB, lonC, latC):
+def distance_to_endpoint(lonA, latA, lonB, latB, lonC, latC):
     """
-    Calculate the distance of  geodesic arcs AC and BC defined by
-    [(lonA, latA), (lonC, latC)] and [(lonB, latB), (lonC, latC)], respectively.
+    Calculate the distance of geodesic arc AC [(lonA, latA), (lonC, latC)] 
 
     PARAMETERS:
     -----------
@@ -781,10 +778,7 @@ def distance_to_endpoints(lonA, latA, lonB, latB, lonC, latC):
     distance : float
         Distance from A to C plus distance from B to C, in radians.
     """
-    a = distance_on_unit_sphere(lonA, latA, lonC, latC, R=1.)
-    b = distance_on_unit_sphere(lonB, latB, lonC, latC, R=1.)
-        
-    return a + b
+    return distance_on_unit_sphere(lonA, latA, lonC, latC, R=1.)
 
 
 def spherical_angle(lonA, latA, lonB, latB, lonC, latC):
