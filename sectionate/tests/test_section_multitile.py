@@ -458,3 +458,30 @@ def test_north_fold_self_connection_raises():
     grid = _make_grid(lon, lat, fc)
     with pytest.raises(NotImplementedError):
         grid_section(grid, [0., 1.], [0., 1.])
+
+
+def test_save_load_roundtrip_preserves_face_indices(tmp_path):
+    """A multi-tile GriddedSection round-trips through save/load with its face indices
+    intact. (f_c was previously not persisted, so a reloaded multi-tile section silently
+    fell back to f_c=None and was mis-derived as single-tile.)"""
+    from sectionate.section import Section, GriddedSection
+    from sectionate.utils import save_gridded_section, load_gridded_section
+
+    grid = _two_face_transport_grid()
+    gs = GriddedSection(Section("seam", ([15., 165.], [0., 0.])), grid)
+    assert gs.f_c is not None and set(np.unique(gs.f_c).tolist()) == {0, 1}  # truly multi-tile
+
+    path = str(tmp_path / "gs.json")
+    save_gridded_section(path, gs)
+    gs2 = load_gridded_section(path, grid)
+
+    assert gs2.f_c is not None
+    np.testing.assert_array_equal(np.asarray(gs2.f_c), np.asarray(gs.f_c))
+    np.testing.assert_array_equal(np.asarray(gs2.i_c), np.asarray(gs.i_c))
+    np.testing.assert_array_equal(np.asarray(gs2.j_c), np.asarray(gs.j_c))
+
+    # transport from the reloaded section matches the original
+    kw = dict(utr="u", vtr="v", layer=None, geometry="cartesian")
+    t1 = convergent_transport(grid, gs.i_c, gs.j_c, gs.f_c, **kw)["conv_mass_transport"].sum().values
+    t2 = convergent_transport(grid, gs2.i_c, gs2.j_c, gs2.f_c, **kw)["conv_mass_transport"].sum().values
+    assert np.isclose(t1, t2)

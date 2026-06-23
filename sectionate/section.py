@@ -3,11 +3,14 @@ import xarray as xr
 
 from .gridutils import (
     get_geo_corners,
-    check_symmetric,
     get_facedim,
     build_neighbor_maps,
-    simple_neighbor_maps,
 )
+
+# Two corner indices map to the same physical point on seams that fold or wrap (e.g.
+# the bipolar north fold). Geodesic distances below this many metres are treated as
+# the same point: far below any real grid spacing, far above float round-trip error.
+COINCIDENT_TOLERANCE_M = 1.e-3
 
 class Section():
     """A named hydrographic section"""
@@ -160,10 +163,21 @@ class GriddedSection(Section):
         return out
     
     def copy(self):
-        """Creates a copy of a GriddedSection, with deep copies of all attributes except the grid."""
-        super().copy()
-        self.i_c = self.i_c.copy()
-        self.j_c = self.j_c.copy()
+        """Create a copy of this GriddedSection, with deep copies of all attributes
+        except the `grid`, which is shared (not copied)."""
+        new = GriddedSection(
+            self,                       # supplies name, coords, children, parent
+            self.grid,                  # shared, not copied
+            i_c=self.i_c.copy(),
+            j_c=self.j_c.copy(),
+            f_c=None if self.f_c is None else self.f_c.copy(),
+        )
+        # Carry over the gridded path coordinates (grid_section overwrites lons_c/lats_c
+        # in place; `__init__` would otherwise reset them to the raw waypoint coords).
+        new.lons_c = self.lons_c.copy()
+        new.lats_c = self.lats_c.copy()
+        new.save = self.save.copy()
+        return new
 
 
 def join_sections(name, *sections, **kwargs):
@@ -251,22 +265,25 @@ def grid_section(grid, lons, lats):
         (lons_c, lats_c) are the corresponding longitude and latitudes.
     """
     geocorners = get_geo_corners(grid)
-    boundary = {ax:grid.axes[ax].boundary for ax in grid.axes}
-
     facedim = get_facedim(grid)
+
     if facedim is not None:
         _check_supported_topology(grid)
-        neighbor_maps = build_neighbor_maps(grid, geocorners)
-    else:
-        neighbor_maps = None
+
+    # All topologies -- periodic wrap, fill/extend walls, multi-tile face
+    # connections, and the bipolar north fold -- are derived uniformly from the
+    # grid's xgcm metadata by padding index arrays (see `build_neighbor_maps`).
+    # Where a single physical corner carries two indices (a periodic seam, a shared
+    # multi-tile boundary corner, or the fold seam), the walk simply steps through
+    # both; the resulting zero-length section edge carries no flux and is dropped when
+    # faces are derived (see `transports.uvindices_from_qindices`).
+    neighbor_maps = build_neighbor_maps(grid, geocorners)
 
     return create_section_composite(
         geocorners["X"],
         geocorners["Y"],
         lons,
         lats,
-        check_symmetric(grid),
-        boundary=boundary,
         neighbor_maps=neighbor_maps,
     )
 
@@ -275,10 +292,10 @@ def _check_supported_topology(grid):
     """
     Raise if the multi-tile `grid` requires topology features sectionate does not yet support.
 
-    Specifically, the tripolar/bipolar north fold is represented as a face that connects to
-    itself (a self-connection) along the "Y" axis. xgcm does not support this either (see
-    https://github.com/xgcm/xgcm/issues/194), and sectionate's pathfinder cannot currently
-    cross such a seam, so we refuse it explicitly rather than silently produce a wrong path.
+    A tripolar/bipolar north fold expressed as a `face_connections` self-connection (a face that
+    connects to itself along the "Y" axis) is not supported. Use the single-tile bipolar-fold
+    boundary instead -- ``boundary={"X": "periodic", "Y": {"fold": "corner"}}`` (xgcm >= the
+    bipolar-fold release) -- which sectionate handles natively via xgcm's fold padding.
     """
     facedim = grid._facedim
     for axis in grid.axes:
@@ -290,9 +307,10 @@ def _check_supported_topology(grid):
                 neighbor_face = side[0]
                 if neighbor_face == face:
                     raise NotImplementedError(
-                        "Grids with a face that connects to itself (e.g. the tripolar/bipolar "
-                        "north fold) are not yet supported. Sections that do not cross the fold "
-                        "work with a single-tile grid using boundary={'X':'periodic','Y':'extend'}."
+                        "Grids that represent the tripolar/bipolar north fold as a face that "
+                        "connects to itself (a `face_connections` self-connection) are not "
+                        "supported. Build the grid as a single tile with the fold expressed as a "
+                        "boundary instead: boundary={'X':'periodic','Y':{'fold':'corner'}}."
                     )
 
 def create_section_composite(
@@ -300,9 +318,7 @@ def create_section_composite(
     gridlat,
     lons,
     lats,
-    symmetric,
-    boundary={"X":"periodic", "Y":"extend"},
-    neighbor_maps=None
+    neighbor_maps,
     ):
     """
     Compute composite section along velocity faces, as defined by coordinates of vorticity points (gridlon, gridlat),
@@ -320,13 +336,10 @@ def create_section_composite(
         longitude of section starting, intermediate and end points, in degrees
     lats: list of float
         latitude of section starting, intermediate and end points, in degrees
-    symmetric: bool
-        True if symmetric (vorticity on "outer" positions); False if non-symmetric (assuming "right" positions).
-    boundary: dictionary mapping grid axis to boundary condition
-        Default: {"X":"periodic", "Y":"extend"}. Set to {"X":"extend", "Y":"extend"} if using a non-periodic regional domain.
-    neighbor_maps: dict or None
-        Precomputed topology-aware neighbor maps for multi-tile grids (see
-        `sectionate.gridutils.build_neighbor_maps`); None for single-tile grids.
+    neighbor_maps: dict
+        Topology-aware neighbor maps from `sectionate.gridutils.build_neighbor_maps`
+        (single- or multi-tile). Sections are always built from an `xgcm.Grid`, so these
+        are always supplied; the usual entry point is `sectionate.grid_section`.
 
     RETURNS:
     -------
@@ -337,7 +350,10 @@ def create_section_composite(
         (lons_c, lats_c) are the corresponding longitude and latitudes.
     """
 
-    multitile = neighbor_maps is not None
+    # A face dimension (3-D corner arrays) marks a multi-tile grid, whose sections
+    # carry a per-point face index. This is independent of `neighbor_maps`, which is
+    # now always provided for grid-derived sections (single- and multi-tile alike).
+    multitile = np.ndim(gridlon) == 3
 
     i_c = np.array([], dtype=np.int64)
     j_c = np.array([], dtype=np.int64)
@@ -356,8 +372,6 @@ def create_section_composite(
             lats[k],
             lons[k + 1],
             lats[k + 1],
-            symmetric,
-            boundary=boundary,
             neighbor_maps=neighbor_maps,
         )
         if multitile:
@@ -382,7 +396,7 @@ def create_section_composite(
 
     return i_c.astype(np.int64), j_c.astype(np.int64), lons_c, lats_c
 
-def create_section(gridlon, gridlat, lonstart, latstart, lonend, latend, symmetric, boundary={"X":"periodic", "Y":"extend"}, neighbor_maps=None):
+def create_section(gridlon, gridlat, lonstart, latstart, lonend, latend, neighbor_maps):
     """
     Compute a section segment along velocity faces, as defined by coordinates of vorticity points (gridlon, gridlat),
     that most closely approximates the geodesic path between points (lonstart, latstart) and (lonend, latend).
@@ -402,13 +416,9 @@ def create_section(gridlon, gridlat, lonstart, latstart, lonend, latend, symmetr
         latitude of starting point, in degrees
     latend: float
         latitude of end point, in degrees
-    symmetric: bool
-        True if symmetric (vorticity on "outer" positions); False if non-symmetric (assuming "right" positions).
-    boundary: dictionary mapping grid axis to boundary condition
-        Default: {"X":"periodic", "Y":"extend"}. Set to {"X":"extend", "Y":"extend"} if using a non-periodic regional domain.
-    neighbor_maps: dict or None
-        Precomputed topology-aware neighbor maps for multi-tile grids (see
-        `sectionate.gridutils.build_neighbor_maps`); None for single-tile grids.
+    neighbor_maps: dict
+        Topology-aware neighbor maps from `sectionate.gridutils.build_neighbor_maps`
+        (single- or multi-tile).
 
     RETURNS:
     -------
@@ -419,13 +429,6 @@ def create_section(gridlon, gridlat, lonstart, latstart, lonend, latend, symmetr
         (lons_c, lats_c) are the corresponding longitude and latitudes.
     """
 
-    # Symmetric periodic single-tile grids carry a redundant final corner column
-    # (the periodic wrap of the first); drop it so periodicity is expressed purely
-    # by the modulo step. Multi-tile periodicity is handled by `face_connections`.
-    if symmetric and boundary["X"] == "periodic" and neighbor_maps is None:
-        gridlon=gridlon[:,:-1]
-        gridlat=gridlat[:,:-1]
-
     return infer_grid_path_from_geo(
         lonstart,
         latstart,
@@ -433,11 +436,10 @@ def create_section(gridlon, gridlat, lonstart, latstart, lonend, latend, symmetr
         latend,
         gridlon,
         gridlat,
-        boundary=boundary,
         neighbor_maps=neighbor_maps,
     )
 
-def infer_grid_path_from_geo(lonstart, latstart, lonend, latend, gridlon, gridlat, boundary={"X":"periodic", "Y":"extend"}, neighbor_maps=None):
+def infer_grid_path_from_geo(lonstart, latstart, lonend, latend, gridlon, gridlat, neighbor_maps):
     """
     Find the grid indices (and coordinates) of vorticity points that most closely approximates
     the geodesic path between points (lonstart, latstart) and (lonend, latend).
@@ -458,11 +460,9 @@ def infer_grid_path_from_geo(lonstart, latstart, lonend, latend, gridlon, gridla
         multi-tile grids (`face_connections`).
     gridlat: np.ndarray
         Array of latitude, in degrees, with the same shape as `gridlon`.
-    boundary: dictionary mapping grid axis to boundary condition
-        Default: {"X":"periodic", "Y":"extend"}. Set to {"X":"extend", "Y":"extend"} if using a non-periodic regional domain.
-    neighbor_maps: dict or None
-        Precomputed topology-aware neighbor maps for multi-tile grids (see
-        `sectionate.gridutils.build_neighbor_maps`); None for single-tile grids.
+    neighbor_maps: dict
+        Topology-aware neighbor maps from `sectionate.gridutils.build_neighbor_maps`
+        (single- or multi-tile).
 
     RETURNS:
     -------
@@ -473,7 +473,7 @@ def infer_grid_path_from_geo(lonstart, latstart, lonend, latend, gridlon, gridla
         (lons_c, lats_c) are the corresponding longitude and latitudes.
     """
 
-    multitile = neighbor_maps is not None
+    multitile = np.ndim(gridlon) == 3
     if multitile:
         istart, jstart, fstart = find_closest_grid_point(lonstart, latstart, gridlon, gridlat)
         iend, jend, fend = find_closest_grid_point(lonend, latend, gridlon, gridlat)
@@ -489,14 +489,13 @@ def infer_grid_path_from_geo(lonstart, latstart, lonend, latend, gridlon, gridla
         jend,
         gridlon,
         gridlat,
-        boundary=boundary,
         neighbor_maps=neighbor_maps,
         f1=fstart,
         f2=fend,
     )
 
 
-def infer_grid_path(i1, j1, i2, j2, gridlon, gridlat, boundary={"X":"periodic", "Y":"extend"}, neighbor_maps=None, f1=None, f2=None):
+def infer_grid_path(i1, j1, i2, j2, gridlon, gridlat, neighbor_maps, f1=None, f2=None):
     """
     Find the grid indices (and coordinates) of vorticity points that most closely approximate
     the geodesic path between the starting and ending corner points.
@@ -517,12 +516,11 @@ def infer_grid_path(i1, j1, i2, j2, gridlon, gridlat, boundary={"X":"periodic", 
         multi-tile grids (`face_connections`).
     gridlat: np.ndarray
         Array of latitude, in degrees, with the same shape as `gridlon`.
-    boundary: dictionary mapping grid axis to boundary condition
-        Default: {"X":"periodic", "Y":"extend"}. Set to {"X":"extend", "Y":"extend"} if using a non-periodic regional domain.
-        Only used for single-tile grids (when `neighbor_maps is None`).
-    neighbor_maps: dict or None
-        Precomputed topology-aware neighbor maps (see `sectionate.gridutils.build_neighbor_maps`).
-        Required for multi-tile grids. If None, single-tile maps are built from `boundary`.
+    neighbor_maps: dict
+        Topology-aware neighbor maps from `sectionate.gridutils.build_neighbor_maps`. The
+        grid's full topology (periodic wrap, fill/extend walls, multi-tile face seams, and
+        the bipolar north fold) is encoded here, so a grid is always required to produce
+        them -- typically via `sectionate.grid_section`.
     f1, f2: integer or None
         Face indices of the starting and ending points (multi-tile grids only); None otherwise.
 
@@ -542,16 +540,19 @@ def infer_grid_path(i1, j1, i2, j2, gridlon, gridlat, boundary={"X":"periodic", 
     if isinstance(gridlat, xr.core.dataarray.DataArray):
         gridlat = gridlat.values
 
-    multitile = neighbor_maps is not None
+    if neighbor_maps is None:
+        raise ValueError(
+            "infer_grid_path requires topology-aware `neighbor_maps`. Build them from an "
+            "xgcm.Grid with sectionate.gridutils.build_neighbor_maps(grid, get_geo_corners(grid)), "
+            "or use the high-level sectionate.grid_section(grid, lons, lats)."
+        )
+
+    multitile = gridlon.ndim == 3
     if multitile:
         nfaces, ny, nx = gridlon.shape
     else:
-        # Single-tile grid: neighbors follow directly from `boundary` metadata.
-        # Build the lookup maps from the (already-trimmed) coordinate array so
-        # they stay consistent with the array we actually walk.
         ny, nx = gridlon.shape
         nfaces = 1
-        neighbor_maps = simple_neighbor_maps((ny, nx), boundary)
 
     def coord(arr, f, j, i):
         return arr[j, i] if f is None else arr[f, j, i]
@@ -597,7 +598,13 @@ def infer_grid_path(i1, j1, i2, j2, gridlon, gridlat, boundary={"X":"periodic", 
                 lat2
             )
 
-        if d_current < 1.e-12:
+        # We are done once we reach the endpoint. On grids where two distinct
+        # corner indices map to the same physical point -- the bipolar fold seam,
+        # where corner i is identified with its mirror image -- the walker can land
+        # on the endpoint's twin index rather than the endpoint index itself, so we
+        # also stop on physical coincidence. The tolerance (in metres) sits far below
+        # any real grid spacing yet well above the fold's float round-trip error.
+        if d_current < COINCIDENT_TOLERANCE_M:
             break
 
         neighbors = [

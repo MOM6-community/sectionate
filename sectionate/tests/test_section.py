@@ -1,5 +1,12 @@
 import numpy as np
 import xarray as xr
+import xgcm
+import pytest
+
+from sectionate.gridutils import (
+    get_geo_corners,
+    build_neighbor_maps,
+)
 
 
 # define simple lat-lon grid
@@ -7,6 +14,27 @@ lon, lat = np.meshgrid(np.arange(360), np.arange(-80, 81))
 ds = xr.Dataset()
 ds["lon"] = xr.DataArray(lon, dims=("y", "x"))
 ds["lat"] = xr.DataArray(lat, dims=("y", "x"))
+
+
+def _latlon_neighbor_maps():
+    """Neighbor maps for the lat-lon grid above (X-periodic, Y clipped), built the
+    same way `grid_section` does -- from an xgcm.Grid. The low-level pathfinder always
+    requires these; a grid is the only source of topology-aware connectivity."""
+    ny, nx = lat.shape
+    g = xgcm.Grid(
+        xr.Dataset(coords={
+            "xq": np.arange(nx), "yq": np.arange(ny),
+            "xh": np.arange(nx) + 0.5, "yh": np.arange(ny) + 0.5,
+            "geolon_c": (("yq", "xq"), lon.astype(float)),
+            "geolat_c": (("yq", "xq"), lat.astype(float)),
+            "geolon": (("yh", "xh"), lon.astype(float)),
+            "geolat": (("yh", "xh"), lat.astype(float)),
+        }),
+        coords={"X": {"center": "xh", "right": "xq"}, "Y": {"center": "yh", "right": "yq"}},
+        boundary={"X": "periodic", "Y": "extend"},
+        autoparse_metadata=False,
+    )
+    return build_neighbor_maps(g, get_geo_corners(g))
 
 def test_distance_on_unit_sphere():
     from sectionate.section import distance_on_unit_sphere
@@ -46,9 +74,10 @@ def test_find_closest_grid_point():
 
 def test_grid_path():
     from sectionate.section import infer_grid_path
+    maps = _latlon_neighbor_maps()
 
     # test zonal line
-    isec, jsec, lonsec, latsec = infer_grid_path(0, 80, 179, 80, lon, lat)
+    isec, jsec, lonsec, latsec = infer_grid_path(0, 80, 179, 80, lon, lat, maps)
     assert len(isec) == 180
     assert lonsec[0] == 0.0
     assert lonsec[-1] == 179.0
@@ -56,7 +85,7 @@ def test_grid_path():
     assert latsec[-1] == 0.0
 
     # test merid line
-    isec, jsec, lonsec, latsec = infer_grid_path(0, 0, 0, 160, lon, lat)
+    isec, jsec, lonsec, latsec = infer_grid_path(0, 0, 0, 160, lon, lat, maps)
     assert len(isec) == 161
     assert lonsec[0] == 0.
     assert lonsec[-1] == 0.
@@ -64,19 +93,20 @@ def test_grid_path():
     assert latsec[-1] == 80.0
 
     # test diagonal
-    isec, jsec, lonsec, latsec = infer_grid_path(0, 0, 100, 100, lon, lat)
+    isec, jsec, lonsec, latsec = infer_grid_path(0, 0, 100, 100, lon, lat, maps)
     assert len(isec) == 201  # expect ni+nj+1 values
-    isec, jsec, lonsec, latsec = infer_grid_path(0, 0, 50, 100, lon, lat)
+    isec, jsec, lonsec, latsec = infer_grid_path(0, 0, 50, 100, lon, lat, maps)
     assert len(isec) == 151  # expect ni+nj+1 values
-    isec, jsec, lonsec, latsec = infer_grid_path(10, 10, 100, 50, lon, lat)
+    isec, jsec, lonsec, latsec = infer_grid_path(10, 10, 100, 50, lon, lat, maps)
     assert len(isec) == 131  # expect ni+nj+1 values
 
 
 def test_infer_grid_path_from_geo():
     from sectionate.section import infer_grid_path_from_geo
+    maps = _latlon_neighbor_maps()
 
     # test zonal line
-    isec, jsec, lonsec, latsec = infer_grid_path_from_geo(0, 0, 179, 0, lon, lat)
+    isec, jsec, lonsec, latsec = infer_grid_path_from_geo(0, 0, 179, 0, lon, lat, maps)
     assert len(isec) == 180
     assert lonsec[0] == 0.0
     assert lonsec[-1] == 179.0
@@ -84,9 +114,80 @@ def test_infer_grid_path_from_geo():
     assert latsec[-1] == 0.0
 
     # test merid line
-    isec, jsec, lonsec, latsec = infer_grid_path_from_geo(180, -80, 180, 80, lon, lat)
+    isec, jsec, lonsec, latsec = infer_grid_path_from_geo(180, -80, 180, 80, lon, lat, maps)
     assert len(isec) == 161
     assert lonsec[0]  == 180.0
     assert lonsec[-1] == 180.0
     assert latsec[0]  == -80.0
     assert latsec[-1] == 80.0
+
+
+def test_infer_grid_path_requires_neighbor_maps():
+    """The low-level pathfinder needs grid-derived connectivity; there is no fallback."""
+    from sectionate.section import infer_grid_path, infer_grid_path_from_geo
+    with pytest.raises(ValueError):
+        infer_grid_path(0, 0, 1, 1, lon, lat, None)
+    with pytest.raises(ValueError):
+        infer_grid_path_from_geo(0, 0, 1, 1, lon, lat, None)
+
+
+def test_zero_length_seam_face_dropped():
+    """On a symmetric periodic grid the seam vertex (360 == 0) carries two indices, so a
+    seam-crossing section has a doubled corner in i_c. The zero-length edge between the two
+    identities is not emitted as a velocity face, while the real faces on either side are."""
+    from sectionate.section import grid_section, distance_on_unit_sphere
+    from sectionate.transports import uvindices_from_qindices
+    N = 8
+    xq = np.linspace(0., 360., N + 1); xh = 0.5 * (xq[:-1] + xq[1:])
+    yq = np.array([-30., 0., 30.]); yh = np.array([-15., 15.])
+    lon_c, lat_c = np.meshgrid(xq, yq); lon2, lat2 = np.meshgrid(xh, yh)
+    g = xgcm.Grid(
+        xr.Dataset(coords={
+            "xq": np.arange(N + 1), "yq": np.arange(3), "xh": np.arange(N), "yh": np.arange(2),
+            "geolon_c": (("yq", "xq"), lon_c), "geolat_c": (("yq", "xq"), lat_c),
+            "geolon": (("yh", "xh"), lon2), "geolat": (("yh", "xh"), lat2),
+        }),
+        coords={"X": {"center": "xh", "outer": "xq"}, "Y": {"center": "yh", "outer": "yq"}},
+        boundary={"X": "periodic", "Y": "extend"}, autoparse_metadata=False,
+    )
+    # short way from 315 deg to 45 deg runs east across the periodic seam
+    i_c, j_c, lons_c, lats_c = grid_section(g, [315., 45.], [0., 0.])
+
+    edge_len = distance_on_unit_sphere(lons_c[:-1], lats_c[:-1], lons_c[1:], lats_c[1:])
+    n_degenerate = int(np.sum(edge_len < 1.e-3))
+    assert n_degenerate == 1                          # one zero-length edge at the seam vertex
+    assert i_c.size >= 4                               # the doubled corner is retained in i_c
+
+    uv = uvindices_from_qindices(g, i_c, j_c)
+    # the degenerate edge is not a face; the flanking real faces are
+    assert uv["var"].size == (i_c.size - 1) - n_degenerate
+    assert np.all(uv["var"] != "0")
+
+
+def test_coincident_twin_termination():
+    """When the walker reaches a corner that is a different index but the same physical
+    point as the target (a fold-seam twin), it terminates there via COINCIDENT_TOLERANCE_M
+    rather than oscillating to the step-count cap. Pre-fix this looped to a RuntimeError."""
+    from sectionate.section import (
+        infer_grid_path, COINCIDENT_TOLERANCE_M, distance_on_unit_sphere,
+    )
+    # col 3 is a near-exact twin of col 0 (the target): a sub-tolerance offset that is
+    # nonetheless above the old exact-coincidence threshold.
+    glon = np.array([[0.0, 2.0, 1.0, 1.e-12]])
+    glat = np.zeros((1, 4))
+    d_twin = distance_on_unit_sphere(glon[0, 0], glat[0, 0], glon[0, 3], glat[0, 3])
+    assert 1.e-12 < d_twin < COINCIDENT_TOLERANCE_M
+
+    def m(imap):
+        return (None, np.zeros((1, 4), dtype=int), np.array([imap], dtype=int))
+    # a line  col1 -- col2 -- col3 (~col0);  col0 hangs only off col3
+    maps = {
+        "right": m([3, 1, 1, 2]),
+        "left":  m([0, 2, 3, 0]),
+        "up":    m([0, 1, 2, 3]),
+        "down":  m([0, 1, 2, 3]),
+    }
+    i_c, j_c, lons_c, lats_c = infer_grid_path(1, 0, 0, 0, glon, glat, maps)
+    # stopped on the twin (index 3), never needing to reach the target's index (0)
+    assert i_c[-1] == 3
+    assert distance_on_unit_sphere(lons_c[-1], lats_c[-1], glon[0, 0], glat[0, 0]) < COINCIDENT_TOLERANCE_M

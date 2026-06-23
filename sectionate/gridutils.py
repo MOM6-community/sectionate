@@ -123,109 +123,91 @@ def check_symmetric(grid):
 # Topology-aware neighbor maps
 #
 # The section pathfinder walks corner-to-corner across the grid. Rather than
-# hard-coding how to step across periodic boundaries or the connections between
-# the tiles of a multi-tile grid, we precompute, for every corner point, the
-# (face, j, i) index of each of its four neighbors ("right", "left", "up",
-# "down"). Walls (no neighbor, e.g. a "fill"/"extend" edge) are represented as
-# the point itself, so the pathfinder simply never finds them closer to the
-# target -- reproducing the previous clip-to-edge behavior.
-#
-#   - Single-tile grids: neighbors follow from each axis' `boundary` metadata
-#     ("periodic" -> wrap, otherwise clip). Computed with plain numpy on the
-#     (already-trimmed) coordinate array the pathfinder walks.
-#   - Multi-tile grids (`face_connections`): edge-crossings require xgcm's
-#     topology logic (axis rotation + reversal across face seams). We reuse it
-#     directly by padding index-valued arrays with `xgcm` and reading the halos.
+# hard-coding how to step across periodic boundaries, multi-tile face seams, or
+# the bipolar north fold, we precompute -- for every corner point -- the
+# ([face,] j, i) index of each of its four neighbors ("right", "left", "up",
+# "down"). All of that topology logic lives upstream in `xgcm`: we pad
+# index-valued arrays with the grid's own boundary/`face_connections` metadata
+# and read the halos (see `build_neighbor_maps`). Walls (no neighbor, e.g. a
+# "fill"/"extend" edge) are represented as the point itself, so the pathfinder
+# simply never finds them closer to the target -- reproducing clip-to-edge.
 # ---------------------------------------------------------------------------
 
 NEIGHBOR_DIRECTIONS = ("right", "left", "up", "down")
 
 
-def simple_neighbor_maps(shape, boundary):
-    """
-    Neighbor maps for a single-tile grid, derived from `boundary` metadata.
-
-    Parameters
-    ----------
-    shape: tuple of int
-        (ny, nx) shape of the corner coordinate array the pathfinder walks.
-    boundary: dict
-        Maps grid axis ("X", "Y") to its xgcm boundary condition. "periodic"
-        wraps; anything else clips to the edge (so edge points are their own
-        neighbor across that boundary).
-
-    Returns
-    -------
-    dict
-        Maps each of `NEIGHBOR_DIRECTIONS` to (fmap, jmap, imap), where fmap is
-        None (no face dimension) and jmap/imap are int arrays of shape (ny, nx)
-        giving the neighbor's (j, i) for every point.
-    """
-    ny, nx = shape
-    I = np.broadcast_to(np.arange(nx), (ny, nx))
-    J = np.broadcast_to(np.arange(ny)[:, None], (ny, nx))
-
-    def step(idx, n, b, delta):
-        if b == "periodic":
-            return np.mod(idx + delta, n)
-        return np.clip(idx + delta, 0, n - 1)
-
-    bx, by = boundary.get("X"), boundary.get("Y")
-    return {
-        "right": (None, J, step(I, nx, bx, +1)),
-        "left":  (None, J, step(I, nx, bx, -1)),
-        "up":    (None, step(J, ny, by, +1), I),
-        "down":  (None, step(J, ny, by, -1), I),
-    }
-
-
 def build_neighbor_maps(grid, geocorners):
     """
-    Neighbor maps for a multi-tile grid, derived from `face_connections`.
+    Topology-aware neighbor maps for any grid, derived entirely from `xgcm`.
 
-    Builds index-valued DataArrays holding each corner point's own (face, j, i),
-    pads them by one cell with `xgcm` (which fills the halos using the grid's
-    face connections, applying any axis rotation and reversal), then reads the
-    halos to obtain each point's four neighbors. This delegates the intricate
-    cross-face index translation to xgcm's tested padding logic.
+    Builds index-valued DataArrays holding each corner point's own ([face,] j, i),
+    pads them by one cell with `xgcm` -- which fills the halos using the grid's
+    boundary metadata, whatever it encodes: a periodic wrap, a fill/extend wall,
+    the connections of a multi-tile grid (`face_connections`, with any axis
+    rotation and reversal), or a bipolar north fold (`boundary={"Y": {"fold": ...}}`,
+    mirror + relabel across the seam) -- then reads the halos to obtain each
+    point's four neighbors. All of the intricate topology logic therefore lives
+    upstream in xgcm; sectionate only reads the resulting connectivity.
+
+    Works for both single-tile grids (corner arrays with dims (Y, X); the returned
+    `fmap` is None) and multi-tile grids (dims (face, Y, X)).
 
     Parameters
     ----------
     grid: xgcm.Grid
-        A grid with `face_connections` metadata (multi-tile).
+        Any C-grid. Topology is taken from its axis `boundary`/`face_connections`.
     geocorners: dict
         Output of `get_geo_corners`; `geocorners["X"]` is the corner-position
-        longitude DataArray with dims (facedim, Y, X).
+        longitude DataArray, dims (Y, X) or (face, Y, X).
 
     Returns
     -------
     dict
-        Maps each of `NEIGHBOR_DIRECTIONS` to (fmap, jmap, imap), int arrays of
-        shape (nf, ny, nx). Walls are represented as the point itself.
+        Maps each of `NEIGHBOR_DIRECTIONS` to (fmap, jmap, imap). For multi-tile
+        grids these are int arrays of shape (nf, ny, nx); for single-tile grids
+        fmap is None and jmap/imap have shape (ny, nx). Walls (unconnected/fill
+        edges) are represented as the point itself.
     """
     from xgcm.padding import pad as _module_pad
 
-    facedim = grid._facedim
+    facedim = getattr(grid, "_facedim", None)
+    multitile = facedim is not None
     da = geocorners["X"]
     Ydim, Xdim = da.dims[-2], da.dims[-1]
-    nf, ny, nx = da.sizes[facedim], da.sizes[Ydim], da.sizes[Xdim]
+    ny, nx = da.sizes[Ydim], da.sizes[Xdim]
 
-    dims = (facedim, Ydim, Xdim)
-    iarr = xr.DataArray(np.broadcast_to(np.arange(nx), (nf, ny, nx)).astype(float), dims=dims)
-    jarr = xr.DataArray(np.broadcast_to(np.arange(ny)[:, None], (nf, ny, nx)).astype(float), dims=dims)
-    farr = xr.DataArray(np.broadcast_to(np.arange(nf)[:, None, None], (nf, ny, nx)).astype(float), dims=dims)
+    if multitile:
+        nf = da.sizes[facedim]
+        dims = (facedim, Ydim, Xdim)
+        shape = (nf, ny, nx)
+        iarr = xr.DataArray(np.broadcast_to(np.arange(nx), shape).astype(float), dims=dims)
+        jarr = xr.DataArray(np.broadcast_to(np.arange(ny)[:, None], shape).astype(float), dims=dims)
+        farr = xr.DataArray(np.broadcast_to(np.arange(nf)[:, None, None], shape).astype(float), dims=dims)
+        own_f = np.broadcast_to(np.arange(nf)[:, None, None], shape)
+        own_j = np.broadcast_to(np.arange(ny)[:, None], shape)
+        own_i = np.broadcast_to(np.arange(nx), shape)
+    else:
+        dims = (Ydim, Xdim)
+        shape = (ny, nx)
+        iarr = xr.DataArray(np.broadcast_to(np.arange(nx), shape).astype(float), dims=dims)
+        jarr = xr.DataArray(np.broadcast_to(np.arange(ny)[:, None], shape).astype(float), dims=dims)
+        farr = None
+        own_f = None
+        own_j = np.broadcast_to(np.arange(ny)[:, None], shape)
+        own_i = np.broadcast_to(np.arange(nx), shape)
 
     boundary = {ax: grid.axes[ax].boundary for ax in grid.axes}
     boundary_width = {ax: (1, 1) for ax in grid.axes}
 
     def pad(a):
         # Prefer the public Grid.pad (xgcm >= 0.9); fall back to the module-level
-        # function in older releases that lack the method.
+        # function in older releases (and dev builds) that lack the method.
         if hasattr(grid, "pad"):
             return grid.pad(a, boundary_width=boundary_width, boundary=boundary, fill_value=np.nan)
         return _module_pad(a, grid, boundary_width, boundary=boundary, fill_value=np.nan)
 
-    pf, pj, pi = pad(farr), pad(jarr), pad(iarr)
+    pj, pi = pad(jarr), pad(iarr)
+    pf = pad(farr) if multitile else None
 
     interior = slice(1, -1)
     slices = {
@@ -235,24 +217,31 @@ def build_neighbor_maps(grid, geocorners):
         "down":  (slice(0, -2), interior),
     }
 
-    own_f = np.broadcast_to(np.arange(nf)[:, None, None], (nf, ny, nx))
-    own_j = np.broadcast_to(np.arange(ny)[:, None], (nf, ny, nx))
-    own_i = np.broadcast_to(np.arange(nx), (nf, ny, nx))
-
     maps = {}
     for d, (ysl, xsl) in slices.items():
-        fmap = pf.isel({Ydim: ysl, Xdim: xsl}).values
-        jmap = pj.isel({Ydim: ysl, Xdim: xsl}).values
-        imap = pi.isel({Ydim: ysl, Xdim: xsl}).values
+        sel = {Ydim: ysl, Xdim: xsl}
+        jmap = pj.isel(sel).values
+        imap = pi.isel(sel).values
         # A NaN halo means "no neighbor" (an unconnected/fill edge) -- represent
-        # the wall as the point itself, matching the single-tile clip behavior.
-        wall = np.isnan(fmap) | np.isnan(jmap) | np.isnan(imap)
-        fmap = np.where(wall, own_f, fmap).astype(np.int64)
+        # the wall as the point itself, matching the clip-to-edge behavior.
+        if multitile:
+            fmap = pf.isel(sel).values
+            wall = np.isnan(fmap) | np.isnan(jmap) | np.isnan(imap)
+            fmap = np.where(wall, own_f, fmap).astype(np.int64)
+        else:
+            wall = np.isnan(jmap) | np.isnan(imap)
+            fmap = None
         jmap = np.where(wall, own_j, jmap).astype(np.int64)
         imap = np.where(wall, own_i, imap).astype(np.int64)
         maps[d] = (fmap, jmap, imap)
 
-    _validate_reciprocity(maps, own_f, own_j, own_i)
+    # The reciprocity check guards against xgcm mis-filling halos for complex
+    # rotated/reversed multi-tile `face_connections`. Single-tile padding (periodic,
+    # fill/extend, bipolar fold) is straightforward and well-tested upstream, and the
+    # fold deliberately identifies seam corners (i <-> mirror(i)) in a way that is not
+    # index-reciprocal, so we only validate multi-tile maps.
+    if multitile:
+        _validate_reciprocity(maps, own_f, own_j, own_i)
     return maps
 
 
@@ -265,22 +254,33 @@ def _validate_reciprocity(maps, own_f, own_j, own_i):
     connections (its behavior is even hash-seed dependent for some
     configurations, e.g. a full cubed sphere). Such a failure would otherwise
     yield silently-wrong sections, so we detect it here and refuse rather than
-    return garbage neighbors.
+    return garbage neighbors. Handles both single-tile (`own_f is None`, 2-D
+    index maps) and multi-tile (3-D) maps.
     """
+    multitile = own_f is not None
+
+    def gather(arr, fmap, jmap, imap):
+        return arr[fmap, jmap, imap] if multitile else arr[jmap, imap]
+
     for d, (fmap, jmap, imap) in maps.items():
-        not_wall = ~((fmap == own_f) & (jmap == own_j) & (imap == own_i))
+        same = (jmap == own_j) & (imap == own_i)
+        if multitile:
+            same &= (fmap == own_f)
+        not_wall = ~same
         # Gather each neighbor's own four neighbors and look for the point back.
-        reciprocated = np.zeros(fmap.shape, dtype=bool)
+        reciprocated = np.zeros(jmap.shape, dtype=bool)
         for (f2, j2, i2) in maps.values():
-            bf = f2[fmap, jmap, imap]
-            bj = j2[fmap, jmap, imap]
-            bi = i2[fmap, jmap, imap]
-            reciprocated |= (bf == own_f) & (bj == own_j) & (bi == own_i)
+            bj = gather(j2, fmap, jmap, imap)
+            bi = gather(i2, fmap, jmap, imap)
+            back = (bj == own_j) & (bi == own_i)
+            if multitile:
+                back &= (gather(f2, fmap, jmap, imap) == own_f)
+            reciprocated |= back
         if np.any(not_wall & ~reciprocated):
             raise NotImplementedError(
                 "Could not derive a consistent neighbor topology from this grid's "
-                "`face_connections`. This is a known limitation of xgcm's padding for "
+                "topology metadata. This is a known limitation of xgcm's padding for "
                 "complex rotated/reversed connections (e.g. a full cubed sphere or the "
-                "lat-lon-cap arctic cap). Sections on grids with simpler face connections "
+                "lat-lon-cap arctic cap). Sections on grids with simpler topology "
                 "are supported."
             )

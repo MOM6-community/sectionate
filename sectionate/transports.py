@@ -7,7 +7,7 @@ from .gridutils import (
     check_symmetric, coord_dict, get_geo_corners, get_facedim, build_neighbor_maps,
     NEIGHBOR_DIRECTIONS,
 )
-from .section import distance_on_unit_sphere
+from .section import distance_on_unit_sphere, COINCIDENT_TOLERANCE_M
 
 
 def _edge_direction(A, neighbor_maps):
@@ -126,9 +126,12 @@ def uvindices_from_qindices(grid, i_c, j_c, f_c=None):
     grid: xgcm.Grid
         Grid object describing ocean model grid and containing data variables
     i_c: int
-        vorticity point indices along "X" dimension 
+        vorticity point indices along "X" dimension
     j_c: int
         vorticity point indices along "Y" dimension
+    f_c: array of int or None
+        Face indices of the vorticity points for multi-tile grids (`face_connections`);
+        None for single-tile grids.
 
     RETURNS:
     --------
@@ -139,8 +142,15 @@ def uvindices_from_qindices(grid, i_c, j_c, f_c=None):
           - "j" : "Y"-dimension index of appropriate "U" or "V" velocity
           - "Yinc" : True if point was passed through while going in positive "j"-index direction
           - "Xinc" : True if point was passed through while going in positive "i"-index direction
+        For multi-tile grids (`f_c` given) the dict additionally contains:
+          - "face" : face index of the velocity point
+          - "Lsign" : +1 if the velocity's positive direction points left of the section's
+            direction of travel, else -1 (a geometric sign that stays consistent across
+            rotated face seams; used in place of "Xinc"/"Yinc").
     """
-    nsec = len(i_c)
+    i_c = np.asarray(i_c)
+    j_c = np.asarray(j_c)
+    nsec = i_c.size
     uvindices = {
         "var":np.zeros(nsec-1, dtype="<U2"),
         "i":np.zeros(nsec-1, dtype=np.int64),
@@ -149,8 +159,12 @@ def uvindices_from_qindices(grid, i_c, j_c, f_c=None):
         "Xinc":np.zeros(nsec-1, dtype=bool)
     }
     symmetric = check_symmetric(grid)
+    geocorners = get_geo_corners(grid)
+    glon = np.asarray(geocorners["X"].values)
+    glat = np.asarray(geocorners["Y"].values)
 
     if f_c is not None:
+        f_c = np.asarray(f_c)
         # Multi-tile grid: attribute each section edge's velocity face by the
         # inside-cell / dual-anchor rule, which handles face seams (see `_uv_for_edge`).
         # The transport sign is carried geometrically in "Lsign" (+1 if the velocity's
@@ -163,9 +177,6 @@ def uvindices_from_qindices(grid, i_c, j_c, f_c=None):
             "Xq": grid._ds[coords["X"]["corner"]].size,
             "Yq": grid._ds[coords["Y"]["corner"]].size,
         }
-        geocorners = get_geo_corners(grid)
-        glon = np.asarray(geocorners["X"].values)
-        glat = np.asarray(geocorners["Y"].values)
         uvindices["face"] = np.zeros(nsec-1, dtype=np.int64)
         uvindices["Lsign"] = np.zeros(nsec-1, dtype=np.int64)
         neighbor_maps = build_neighbor_maps(grid, geocorners)
@@ -178,27 +189,39 @@ def uvindices_from_qindices(grid, i_c, j_c, f_c=None):
             uvindices["j"][k] = vj
             uvindices["face"][k] = face
             uvindices["Lsign"][k] = Lsign
-        return uvindices
+    else:
+        for k in range(0, nsec-1):
+            zonal = not(j_c[k+1] != j_c[k])
+            Xinc = i_c[k+1] > i_c[k]
+            Yinc = j_c[k+1] > j_c[k]
+            # Handle corner cases for wrapping boundaries
+            if (i_c[k+1] - i_c[k])>1: Xinc = False
+            elif (i_c[k+1] - i_c[k])<-1: Xinc = True
+            uvindex = {
+                "var": "V" if zonal else "U",
+                "i": i_c[k+(1 if not(Xinc) and zonal else 0)],
+                "j": j_c[k+(1 if not(Yinc) and not(zonal) else 0)],
+                "Yinc": Yinc,
+                "Xinc": Xinc,
+            }
+            uvindex["i"] += (1 if not(symmetric) and zonal else 0)
+            uvindex["j"] += (1 if not(symmetric) and not(zonal) else 0)
+            for (key, v) in uvindices.items():
+                v[k] = uvindex[key]
 
-    for k in range(0, nsec-1):
-        zonal = not(j_c[k+1] != j_c[k])
-        Xinc = i_c[k+1] > i_c[k]
-        Yinc = j_c[k+1] > j_c[k]
-        # Handle corner cases for wrapping boundaries
-        if (i_c[k+1] - i_c[k])>1: Xinc = False
-        elif (i_c[k+1] - i_c[k])<-1: Xinc = True
-        uvindex = {
-            "var": "V" if zonal else "U",
-            "i": i_c[k+(1 if not(Xinc) and zonal else 0)],
-            "j": j_c[k+(1 if not(Yinc) and not(zonal) else 0)],
-            "Yinc": Yinc,
-            "Xinc": Xinc,
-        }
-        uvindex["i"] += (1 if not(symmetric) and zonal else 0)
-        uvindex["j"] += (1 if not(symmetric) and not(zonal) else 0)
-        for (key, v) in uvindices.items():
-            v[k] = uvindex[key]
-    return uvindices
+    # Drop zero-length faces. A single physical corner can carry two indices -- at a
+    # periodic seam, a shared multi-tile boundary corner, or the bipolar fold seam -- so
+    # the section path can contain a consecutive pair whose endpoints are the same point.
+    # That edge spans no grid cell and carries no flux, so it is not a velocity face. Both
+    # corners are kept (they anchor the real faces on either side), but the degenerate edge
+    # between them emits no face. Done here, in the deterministic corner->face derivation,
+    # so it applies identically when a saved section is reloaded from its (i_c, j_c[, f_c]).
+    if f_c is not None:
+        clon, clat = glon[f_c, j_c, i_c], glat[f_c, j_c, i_c]
+    else:
+        clon, clat = glon[j_c, i_c], glat[j_c, i_c]
+    keep = distance_on_unit_sphere(clon[:-1], clat[:-1], clon[1:], clat[1:]) > COINCIDENT_TOLERANCE_M
+    return {key: np.asarray(val)[keep] for key, val in uvindices.items()}
 
 def uvcoords_from_uvindices(grid, uvindices):
     """
@@ -388,6 +411,11 @@ def convergent_transport(
         If False, convergence is defined as "outwards" (equivalently, negative the inward convergence).
         If a boolean xr.DataArray, get value of positive_in by selecting the value of the mask on the inside
         of an arbitrary velocity face.
+        For *open* sections (whose first and last waypoints are far apart) there is no enclosing
+        polygon, so "inwards"/"outwards" is undefined. In that case the sign instead follows the
+        left-of-transect convention: `positive_in=True` makes positive transport point to the LEFT
+        of the section as it is traversed from the first to the last waypoint, and `positive_in=False`
+        flips it to the right. A UserWarning is raised so the orientation can be verified.
     cell_widths : dict
         Values of "U" and "V" items in `cell_widths` correspond to the names of the coordinates describing the width of
         velocity cells. If they are both present in `grid._ds`, accumulate distance along the section and add it to the
@@ -464,12 +492,31 @@ def convergent_transport(
             coords["Y"]["corner"]:xr.DataArray(j_c, dims=("pt",)),
             **corner_fsel
         }
-        counterclockwise = is_section_counterclockwise(
-            geo_corners["X"].isel(idx).values,
-            geo_corners["Y"].isel(idx).values,
-            geometry=geometry
+        lons_q = geo_corners["X"].isel(idx).values
+        lats_q = geo_corners["Y"].isel(idx).values
+        section_is_open = (
+            distance_on_unit_sphere(lons_q[0], lats_q[0], lons_q[-1], lats_q[-1]) > 10.
         )
-        positive_in = positive_in ^ (not(counterclockwise))
+        if section_is_open:
+            # An open section encloses no polygon, so the inward/outward meaning of
+            # `positive_in` is undefined. Fall back to the left-of-transect convention:
+            # `positive_in=True` keeps the per-edge `Lsign` (positive transport to the LEFT
+            # of travel, from the first waypoint to the last) and `positive_in=False` flips
+            # it to the right. No polygon-orientation correction is applied.
+            warnings.warn(
+                "This section is open (its first and last waypoints are far apart), so it does "
+                "not enclose a polygon and the inward/outward sense of `positive_in` is undefined. "
+                "Sectionate applies the left-of-transect convention instead: with `positive_in=True` "
+                "positive transport points to the LEFT of the section as it is traversed from the "
+                "first to the last waypoint (set `positive_in=False` to flip to right-of-transect). "
+                "Verify the sign matches your expectations, e.g. by plotting the section's normal vectors."
+            )
+        else:
+            # Closed section encloses a polygon: orient so `positive_in` means "into" it.
+            counterclockwise = is_section_counterclockwise(
+                lons_q, lats_q, geometry=geometry
+            )
+            positive_in = positive_in ^ (not(counterclockwise))
     orient_fact = 1 if positive_in else -1
 
     coords = coord_dict(grid)
@@ -532,8 +579,7 @@ def convergent_transport(
         "orient_fact":orient_fact,
         "positive_in":positive_in,
     }}
-    dsout[outname].attrs
-    
+
     if layer is not None:
         dsout[layer] = grid._ds[layer]
         if interface is not None:
@@ -547,7 +593,13 @@ def is_section_counterclockwise(lons_c, lats_c, geometry="spherical"):
     `geometry`). Under the hood, it does this by checking whether the signed area (or determinant) of the polygon
     is negative (counterclockwise) or positive (clockwise). This is only a meaningful calculation if the section
     is closed, i.e. (lons_c[-1], lats_c[-1]) == (lons_c[0], lats_c[0]), and therefore defines a polygon.
-    
+
+    If the section is *open* (its first and last waypoints are far apart), it is closed here with a
+    great-circle segment from the last waypoint back to the first so that an orientation can still be
+    computed, and a UserWarning is raised. Because that closure is arbitrary, the inward/outward sense is
+    undefined for open sections; callers should instead rely on the left-of-transect convention (positive
+    transport to the left of travel from the first to the last waypoint).
+
     For the case `geometry="spherical"`, the periodic nature of the longitude coordinate complicates things;
     instead of working in spherical coordinates, we use a South-Pole stereographic projection of the surface of the sphere
     and evaluate the orientation of the projected polygon with respect to the stereographic plane.
@@ -565,7 +617,14 @@ def is_section_counterclockwise(lons_c, lats_c, geometry="spherical"):
     counterclockwise : bool
     """
     if distance_on_unit_sphere(lons_c[0], lats_c[0], lons_c[-1], lats_c[-1]) > 10.:
-        warnings.warn("The orientation of open sections is ambiguous–verify that it matches expectations!")
+        warnings.warn(
+            "`is_section_counterclockwise` was called on an open section; it is closed here with "
+            "a great-circle segment from the last waypoint back to the first so that an orientation "
+            "can still be returned, but that orientation is arbitrary for an open section. For "
+            "transports, do not rely on this: `convergent_transport` instead uses the well-defined "
+            "left-of-transect convention (positive transport to the LEFT of travel, from the first "
+            "waypoint to the last)."
+        )
         lons_c = np.append(lons_c, lons_c[0])
         lats_c = np.append(lats_c, lats_c[0])
     
