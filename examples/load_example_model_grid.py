@@ -24,5 +24,11 @@ def load_MOM6_example_grid():
         'X': {'center': 'xh', 'outer': 'xq'},
         'Y': {'center': 'yh', 'outer': 'yq'},
     }
-    grid = xgcm.Grid(ds, coords=coords, boundary={"X":"periodic", "Y":"extend"}, autoparse_metadata=False)
+    # This is a global tripolar grid: zonally periodic, with a bipolar north fold along
+    # its top edge. Declaring the fold (xgcm >= the bipolar-fold release) lets sectionate
+    # trace sections across the Arctic seam. (Sections that stay south of the fold behave
+    # identically to boundary={"Y": "extend"}.)
+    grid = xgcm.Grid(ds, coords=coords,
+                     boundary={"X": "periodic", "Y": {"fold": "corner"}},
+                     autoparse_metadata=False)
     return grid
