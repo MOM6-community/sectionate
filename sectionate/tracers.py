@@ -6,7 +6,8 @@ from .transports import (
 
 from .gridutils import (
     check_symmetric,
-    coord_dict
+    coord_dict,
+    get_facedim
 )
 
 def extract_tracer(
@@ -14,6 +15,7 @@ def extract_tracer(
     grid,
     i_c,
     j_c,
+    f_c=None,
     sect_coord="sect"
     ):
     """
@@ -42,26 +44,30 @@ def extract_tracer(
     da=grid._ds[name]
     coords = coord_dict(grid)
     symmetric = check_symmetric(grid)
-    
+
     # get indices of UV points from broken line
-    uvindices = uvindices_from_qindices(grid, i_c, j_c)
-        
+    uvindices = uvindices_from_qindices(grid, i_c, j_c, f_c=f_c)
+
     section = xr.Dataset()
     section["i"] = xr.DataArray(uvindices["i"], dims=sect_coord)
     section["j"] = xr.DataArray(uvindices["j"], dims=sect_coord)
     section["Umask"] = xr.DataArray(uvindices["var"]=="U", dims=sect_coord)
     section["Vmask"] = xr.DataArray(uvindices["var"]=="V", dims=sect_coord)
 
+    # On a multi-tile grid the velocity face varies per section point; select it pointwise.
+    facedim = get_facedim(grid) if f_c is not None else None
+    fsel = {facedim: xr.DataArray(uvindices["face"], dims=sect_coord)} if facedim is not None else {}
+
     increment = 1 if symmetric else 0
     usel_left  = {coords["X"]["center"]: np.mod(section["i"]-increment  , da[coords["X"]["center"]].size),
-                  coords["Y"]["center"]: np.mod(section["j"]            , da[coords["Y"]["center"]].size)}
+                  coords["Y"]["center"]: np.mod(section["j"]            , da[coords["Y"]["center"]].size), **fsel}
     usel_right = {coords["X"]["center"]: np.mod(section["i"]-increment+1, da[coords["X"]["center"]].size),
-                  coords["Y"]["center"]: np.mod(section["j"]            , da[coords["Y"]["center"]].size)}
+                  coords["Y"]["center"]: np.mod(section["j"]            , da[coords["Y"]["center"]].size), **fsel}
 
     vsel_left  = {coords["X"]["center"]: np.mod(section["i"]            , da[coords["X"]["center"]].size),
-                  coords["Y"]["center"]: np.mod(section["j"]-increment  , da[coords["Y"]["center"]].size)}
+                  coords["Y"]["center"]: np.mod(section["j"]-increment  , da[coords["Y"]["center"]].size), **fsel}
     vsel_right = {coords["X"]["center"]: np.mod(section["i"]            , da[coords["X"]["center"]].size),
-                  coords["Y"]["center"]: np.mod(section["j"]-increment+1, da[coords["Y"]["center"]].size)}
+                  coords["Y"]["center"]: np.mod(section["j"]-increment+1, da[coords["Y"]["center"]].size), **fsel}
 
     tracer = sum([
         xr.where(~np.isnan(da.isel(usel_right)), 0.5*da.isel(usel_left),  da.isel(usel_left) ).fillna(0.) * section["Umask"],

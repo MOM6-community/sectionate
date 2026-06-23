@@ -1,7 +1,13 @@
 import numpy as np
 import xarray as xr
 
-from .gridutils import get_geo_corners, check_symmetric
+from .gridutils import (
+    get_geo_corners,
+    check_symmetric,
+    get_facedim,
+    build_neighbor_maps,
+    simple_neighbor_maps,
+)
 
 class Section():
     """A named hydrographic section"""
@@ -113,7 +119,7 @@ class GriddedSection(Section):
     -------
     instance of GriddedSection
     """
-    def __init__(self, section, grid, i_c=None, j_c=None):
+    def __init__(self, section, grid, i_c=None, j_c=None, f_c=None):
         super().__init__(
             section.name,
             section.coords,
@@ -121,6 +127,7 @@ class GriddedSection(Section):
             parent = section.parent
         )
         self.grid = grid
+        self.f_c = f_c
         if isinstance(i_c, (list, np.ndarray)) & isinstance(j_c, (list, np.ndarray)):
             self.i_c = i_c
             self.j_c = j_c
@@ -138,14 +145,19 @@ class GriddedSection(Section):
         -----------------
         **kwargs passed directly to sectionate.grid_section
         """
-        self.i_c, self.j_c, self.lons_c, self.lats_c = grid_section(
+        out = grid_section(
             self.grid,
             self.lons_c,
             self.lats_c,
             **kwargs
         )
-        
-        return self.i_c, self.j_c, self.lons_c, self.lats_c
+        if len(out) == 5:
+            self.i_c, self.j_c, self.f_c, self.lons_c, self.lats_c = out
+        else:
+            self.i_c, self.j_c, self.lons_c, self.lats_c = out
+            self.f_c = None
+
+        return out
     
     def copy(self):
         """Creates a copy of a GriddedSection, with deep copies of all attributes except the grid."""
@@ -212,39 +224,76 @@ def join_sections(name, *sections, **kwargs):
             
     return section
         
-def grid_section(grid, lons, lats, topology="latlon"):
+def grid_section(grid, lons, lats):
     """
     Compute composite section along model `grid` velocity faces that approximates geodesic paths
     between consecutive points defined by (lons, lats).
+
+    The grid topology is inferred entirely from the `grid` metadata: each axis' `boundary`
+    condition ("periodic" wraps, otherwise clip) for single-tile grids, and `face_connections`
+    for multi-tile grids (e.g. the lat-lon-cap or cubed-sphere).
 
     Parameters
     ----------
     grid: xgcm.Grid
         Object describing the geometry of the ocean model grid, including metadata about variable names for
-        the staggered C-grid dimensions and c oordinates.
+        the staggered C-grid dimensions and coordinates.
     lons: list or np.ndarray
         Longitudes, in degrees, of consecutive vertices defining a piece-wise geodesic section.
     lats: list or np.ndarray
         Latitudes, in degrees (in range [-90, 90]), of consecutive vertices defining a piece-wise geodesic section.
-    topology: str
-        Default: "latlon". Currently only supports the following options: ["latlon", "cartesian", "MOM-tripolar"].
-        
+
     Returns
     -------
-    i_c, j_c, lons_c, lats_c: `np.ndarray` of types (int, int, float, float) 
-        (i_c, j_c) correspond to indices of vorticity points that define velocity faces.
+    i_c, j_c[, f_c], lons_c, lats_c: `np.ndarray`
+        (i_c, j_c) correspond to indices of vorticity points that define velocity faces. For
+        multi-tile grids, the face index f_c of each point is returned as well.
         (lons_c, lats_c) are the corresponding longitude and latitudes.
     """
     geocorners = get_geo_corners(grid)
+    boundary = {ax:grid.axes[ax].boundary for ax in grid.axes}
+
+    facedim = get_facedim(grid)
+    if facedim is not None:
+        _check_supported_topology(grid)
+        neighbor_maps = build_neighbor_maps(grid, geocorners)
+    else:
+        neighbor_maps = None
+
     return create_section_composite(
         geocorners["X"],
         geocorners["Y"],
         lons,
         lats,
         check_symmetric(grid),
-        boundary={ax:grid.axes[ax]._boundary for ax in grid.axes},
-        topology=topology
+        boundary=boundary,
+        neighbor_maps=neighbor_maps,
     )
+
+
+def _check_supported_topology(grid):
+    """
+    Raise if the multi-tile `grid` requires topology features sectionate does not yet support.
+
+    Specifically, the tripolar/bipolar north fold is represented as a face that connects to
+    itself (a self-connection) along the "Y" axis. xgcm does not support this either (see
+    https://github.com/xgcm/xgcm/issues/194), and sectionate's pathfinder cannot currently
+    cross such a seam, so we refuse it explicitly rather than silently produce a wrong path.
+    """
+    facedim = grid._facedim
+    for axis in grid.axes:
+        connections = getattr(grid.axes[axis], "_connections", None) or {}
+        for face, sides in connections.items():
+            for side in sides:
+                if side is None:
+                    continue
+                neighbor_face = side[0]
+                if neighbor_face == face:
+                    raise NotImplementedError(
+                        "Grids with a face that connects to itself (e.g. the tripolar/bipolar "
+                        "north fold) are not yet supported. Sections that do not cross the fold "
+                        "work with a single-tile grid using boundary={'X':'periodic','Y':'extend'}."
+                    )
 
 def create_section_composite(
     gridlon,
@@ -253,7 +302,7 @@ def create_section_composite(
     lats,
     symmetric,
     boundary={"X":"periodic", "Y":"extend"},
-    topology="latlon"
+    neighbor_maps=None
     ):
     """
     Compute composite section along velocity faces, as defined by coordinates of vorticity points (gridlon, gridlat),
@@ -263,9 +312,10 @@ def create_section_composite(
     -----------
 
     gridlon: np.ndarray
-        2d array of longitude (with dimensions ("Y", "X")), in degrees
+        Array of longitude, in degrees. 2d (Y, X) for single-tile grids; 3d (face, Y, X) for
+        multi-tile grids (`face_connections`).
     gridlat: np.ndarray
-        2d array of latitude (with dimensions ("Y", "X")), in degrees
+        Array of latitude, in degrees, with the same shape as `gridlon`.
     lons: list of float
         longitude of section starting, intermediate and end points, in degrees
     lats: list of float
@@ -274,19 +324,24 @@ def create_section_composite(
         True if symmetric (vorticity on "outer" positions); False if non-symmetric (assuming "right" positions).
     boundary: dictionary mapping grid axis to boundary condition
         Default: {"X":"periodic", "Y":"extend"}. Set to {"X":"extend", "Y":"extend"} if using a non-periodic regional domain.
-    topology: str
-        Default: "latlon". Currently only supports the following options: ["latlon", "cartesian", "MOM-tripolar"].
+    neighbor_maps: dict or None
+        Precomputed topology-aware neighbor maps for multi-tile grids (see
+        `sectionate.gridutils.build_neighbor_maps`); None for single-tile grids.
 
     RETURNS:
     -------
 
-    i_c, j_c, lons_c, lats_c: `np.ndarray` of types (int, int, float, float) 
-        (i_c, j_c) correspond to indices of vorticity points that define velocity faces.
+    i_c, j_c[, f_c], lons_c, lats_c: `np.ndarray`
+        (i_c, j_c[, f_c]) correspond to indices of vorticity points that define velocity faces;
+        the face index f_c is only returned for multi-tile grids.
         (lons_c, lats_c) are the corresponding longitude and latitudes.
     """
 
+    multitile = neighbor_maps is not None
+
     i_c = np.array([], dtype=np.int64)
     j_c = np.array([], dtype=np.int64)
+    f_c = np.array([], dtype=np.int64)
     lons_c = np.array([], dtype=np.float64)
     lats_c = np.array([], dtype=np.float64)
 
@@ -294,7 +349,7 @@ def create_section_composite(
         raise ValueError("lons and lats should have the same length")
 
     for k in range(len(lons) - 1):
-        i_c_seg, j_c_seg, lons_c_seg, lats_c_seg = create_section(
+        seg = create_section(
             gridlon,
             gridlat,
             lons[k],
@@ -303,22 +358,31 @@ def create_section_composite(
             lats[k + 1],
             symmetric,
             boundary=boundary,
-            topology=topology
+            neighbor_maps=neighbor_maps,
         )
+        if multitile:
+            i_c_seg, j_c_seg, f_c_seg, lons_c_seg, lats_c_seg = seg
+        else:
+            i_c_seg, j_c_seg, lons_c_seg, lats_c_seg = seg
 
         i_c = np.concatenate([i_c, i_c_seg[:-1]], axis=0)
         j_c = np.concatenate([j_c, j_c_seg[:-1]], axis=0)
         lons_c = np.concatenate([lons_c, lons_c_seg[:-1]], axis=0)
         lats_c = np.concatenate([lats_c, lats_c_seg[:-1]], axis=0)
-        
+        if multitile:
+            f_c = np.concatenate([f_c, f_c_seg[:-1]], axis=0)
+
     i_c = np.concatenate([i_c, [i_c_seg[-1]]], axis=0)
     j_c = np.concatenate([j_c, [j_c_seg[-1]]], axis=0)
     lons_c = np.concatenate([lons_c, [lons_c_seg[-1]]], axis=0)
     lats_c = np.concatenate([lats_c, [lats_c_seg[-1]]], axis=0)
+    if multitile:
+        f_c = np.concatenate([f_c, [f_c_seg[-1]]], axis=0)
+        return i_c.astype(np.int64), j_c.astype(np.int64), f_c.astype(np.int64), lons_c, lats_c
 
     return i_c.astype(np.int64), j_c.astype(np.int64), lons_c, lats_c
 
-def create_section(gridlon, gridlat, lonstart, latstart, lonend, latend, symmetric, boundary={"X":"periodic", "Y":"extend"}, topology="latlon"):
+def create_section(gridlon, gridlat, lonstart, latstart, lonend, latend, symmetric, boundary={"X":"periodic", "Y":"extend"}, neighbor_maps=None):
     """
     Compute a section segment along velocity faces, as defined by coordinates of vorticity points (gridlon, gridlat),
     that most closely approximates the geodesic path between points (lonstart, latstart) and (lonend, latend).
@@ -342,22 +406,27 @@ def create_section(gridlon, gridlat, lonstart, latstart, lonend, latend, symmetr
         True if symmetric (vorticity on "outer" positions); False if non-symmetric (assuming "right" positions).
     boundary: dictionary mapping grid axis to boundary condition
         Default: {"X":"periodic", "Y":"extend"}. Set to {"X":"extend", "Y":"extend"} if using a non-periodic regional domain.
-    topology: str
-        Default: "latlon". Currently only supports the following options: ["latlon", "cartesian", "MOM-tripolar"].
+    neighbor_maps: dict or None
+        Precomputed topology-aware neighbor maps for multi-tile grids (see
+        `sectionate.gridutils.build_neighbor_maps`); None for single-tile grids.
 
     RETURNS:
     -------
 
-    i_c, j_c, lons_c, lats_c: `np.ndarray` of types (int, int, float, float) 
-        (i_c, j_c) correspond to indices of vorticity points that define velocity faces.
+    i_c, j_c[, f_c], lons_c, lats_c: `np.ndarray`
+        (i_c, j_c[, f_c]) correspond to indices of vorticity points that define velocity faces;
+        the face index f_c is only returned for multi-tile grids.
         (lons_c, lats_c) are the corresponding longitude and latitudes.
     """
 
-    if symmetric and boundary["X"] == "periodic":
+    # Symmetric periodic single-tile grids carry a redundant final corner column
+    # (the periodic wrap of the first); drop it so periodicity is expressed purely
+    # by the modulo step. Multi-tile periodicity is handled by `face_connections`.
+    if symmetric and boundary["X"] == "periodic" and neighbor_maps is None:
         gridlon=gridlon[:,:-1]
         gridlat=gridlat[:,:-1]
 
-    i_c_seg, j_c_seg, lons_c_seg, lats_c_seg = infer_grid_path_from_geo(
+    return infer_grid_path_from_geo(
         lonstart,
         latstart,
         lonend,
@@ -365,16 +434,10 @@ def create_section(gridlon, gridlat, lonstart, latstart, lonend, latend, symmetr
         gridlon,
         gridlat,
         boundary=boundary,
-        topology=topology
-    )
-    return (
-        i_c_seg,
-        j_c_seg,
-        lons_c_seg,
-        lats_c_seg
+        neighbor_maps=neighbor_maps,
     )
 
-def infer_grid_path_from_geo(lonstart, latstart, lonend, latend, gridlon, gridlat, boundary={"X":"periodic", "Y":"extend"}, topology="latlon"):
+def infer_grid_path_from_geo(lonstart, latstart, lonend, latend, gridlon, gridlat, boundary={"X":"periodic", "Y":"extend"}, neighbor_maps=None):
     """
     Find the grid indices (and coordinates) of vorticity points that most closely approximates
     the geodesic path between points (lonstart, latstart) and (lonend, latend).
@@ -391,35 +454,35 @@ def infer_grid_path_from_geo(lonstart, latstart, lonend, latend, gridlon, gridla
     latend: float
         latitude of section end point, in degrees
     gridlon: np.ndarray
-        2d array of longitude, in degrees
+        Array of longitude, in degrees. 2d (Y, X) for single-tile grids; 3d (face, Y, X) for
+        multi-tile grids (`face_connections`).
     gridlat: np.ndarray
-        2d array of latitude, in degrees
+        Array of latitude, in degrees, with the same shape as `gridlon`.
     boundary: dictionary mapping grid axis to boundary condition
         Default: {"X":"periodic", "Y":"extend"}. Set to {"X":"extend", "Y":"extend"} if using a non-periodic regional domain.
-    topology: str
-        Default: "latlon". Currently only supports the following options: ["latlon", "cartesian", "MOM-tripolar"].
+    neighbor_maps: dict or None
+        Precomputed topology-aware neighbor maps for multi-tile grids (see
+        `sectionate.gridutils.build_neighbor_maps`); None for single-tile grids.
 
     RETURNS:
     -------
 
-    i_c, j_c, lons_c, lats_c: `np.ndarray` of types (int, int, float, float) 
-        (i_c, j_c) correspond to indices of vorticity points that define velocity faces.
+    i_c, j_c[, f_c], lons_c, lats_c: `np.ndarray`
+        (i_c, j_c[, f_c]) correspond to indices of vorticity points that define velocity faces;
+        the face index f_c is only returned for multi-tile grids.
         (lons_c, lats_c) are the corresponding longitude and latitudes.
     """
 
-    istart, jstart = find_closest_grid_point(
-        lonstart,
-        latstart,
-        gridlon,
-        gridlat
-    )
-    iend, jend = find_closest_grid_point(
-        lonend,
-        latend,
-        gridlon,
-        gridlat
-    )
-    i_c_seg, j_c_seg, lons_c_seg, lats_c_seg = infer_grid_path(
+    multitile = neighbor_maps is not None
+    if multitile:
+        istart, jstart, fstart = find_closest_grid_point(lonstart, latstart, gridlon, gridlat)
+        iend, jend, fend = find_closest_grid_point(lonend, latend, gridlon, gridlat)
+    else:
+        istart, jstart = find_closest_grid_point(lonstart, latstart, gridlon, gridlat)
+        iend, jend = find_closest_grid_point(lonend, latend, gridlon, gridlat)
+        fstart, fend = None, None
+
+    return infer_grid_path(
         istart,
         jstart,
         iend,
@@ -427,17 +490,16 @@ def infer_grid_path_from_geo(lonstart, latstart, lonend, latend, gridlon, gridla
         gridlon,
         gridlat,
         boundary=boundary,
-        topology=topology
+        neighbor_maps=neighbor_maps,
+        f1=fstart,
+        f2=fend,
     )
 
-    return i_c_seg, j_c_seg, lons_c_seg, lats_c_seg
 
-
-def infer_grid_path(i1, j1, i2, j2, gridlon, gridlat, boundary={"X":"periodic", "Y":"extend"}, topology="latlon"):
+def infer_grid_path(i1, j1, i2, j2, gridlon, gridlat, boundary={"X":"periodic", "Y":"extend"}, neighbor_maps=None, f1=None, f2=None):
     """
     Find the grid indices (and coordinates) of vorticity points that most closely approximate
-    the geodesic path between points (gridlon[j1,i1], gridlat[j1,i1]) and
-    (gridlon[j2,i2], gridlat[j2,i2]).
+    the geodesic path between the starting and ending corner points.
 
     PARAMETERS:
     -----------
@@ -451,100 +513,114 @@ def infer_grid_path(i1, j1, i2, j2, gridlon, gridlat, boundary={"X":"periodic", 
     j2: integer
         j-coord of point2
     gridlon: np.ndarray
-        2d array of longitude, in degrees
+        Array of longitude, in degrees. 2d (Y, X) for single-tile grids; 3d (face, Y, X) for
+        multi-tile grids (`face_connections`).
     gridlat: np.ndarray
-        2d array of latitude, in degrees
+        Array of latitude, in degrees, with the same shape as `gridlon`.
     boundary: dictionary mapping grid axis to boundary condition
         Default: {"X":"periodic", "Y":"extend"}. Set to {"X":"extend", "Y":"extend"} if using a non-periodic regional domain.
-    topology: str
-        Default: "latlon". Currently only supports the following options: ["latlon", "cartesian", "MOM-tripolar"].
+        Only used for single-tile grids (when `neighbor_maps is None`).
+    neighbor_maps: dict or None
+        Precomputed topology-aware neighbor maps (see `sectionate.gridutils.build_neighbor_maps`).
+        Required for multi-tile grids. If None, single-tile maps are built from `boundary`.
+    f1, f2: integer or None
+        Face indices of the starting and ending points (multi-tile grids only); None otherwise.
 
     RETURNS:
     -------
 
-    i_c_seg, j_c_seg: list of int
-        list of (i,j) pairs bounded by (i1, j1) and (i2, j2)
-    lons_c_seg, lats_c_seg: list of float
-        corresponding longitude and latitude for i_c_seg, j_c_seg
+    For single-tile grids:
+        i_c_seg, j_c_seg, lons_c_seg, lats_c_seg
+    For multi-tile grids, additionally the face index of each point:
+        i_c_seg, j_c_seg, f_c_seg, lons_c_seg, lats_c_seg
+
+    (i_c_seg, j_c_seg[, f_c_seg]) are the vorticity-point indices bounded by the start and end
+    points; (lons_c_seg, lats_c_seg) are the corresponding longitude and latitude.
     """
-    ny, nx = gridlon.shape
-    
     if isinstance(gridlon, xr.core.dataarray.DataArray):
         gridlon = gridlon.values
     if isinstance(gridlat, xr.core.dataarray.DataArray):
         gridlat = gridlat.values
 
+    multitile = neighbor_maps is not None
+    if multitile:
+        nfaces, ny, nx = gridlon.shape
+    else:
+        # Single-tile grid: neighbors follow directly from `boundary` metadata.
+        # Build the lookup maps from the (already-trimmed) coordinate array so
+        # they stay consistent with the array we actually walk.
+        ny, nx = gridlon.shape
+        nfaces = 1
+        neighbor_maps = simple_neighbor_maps((ny, nx), boundary)
+
+    def coord(arr, f, j, i):
+        return arr[j, i] if f is None else arr[f, j, i]
+
+    def neighbor(direction, f, j, i):
+        fmap, jmap, imap = neighbor_maps[direction]
+        if fmap is None:
+            return (None, int(jmap[j, i]), int(imap[j, i]))
+        return (int(fmap[f, j, i]), int(jmap[f, j, i]), int(imap[f, j, i]))
+
     # target coordinates
-    lon1, lat1 = gridlon[j1, i1], gridlat[j1, i1]
-    lon2, lat2 = gridlon[j2, i2], gridlat[j2, i2]
-    
-    # init loop index to starting position
-    i = i1
-    j = j1
+    lon1, lat1 = coord(gridlon, f1, j1, i1), coord(gridlat, f1, j1, i1)
+    lon2, lat2 = coord(gridlon, f2, j2, i2), coord(gridlat, f2, j2, i2)
+
+    # init loop position to starting point
+    f, j, i = f1, j1, i1
 
     i_c_seg = [i]  # add first point to list of points
     j_c_seg = [j]  # add first point to list of points
+    f_c_seg = [f]  # add first point to list of points
 
     # iterate through the grid path steps until we reach end of section
     ct = 0 # grid path step counter
+    # safety bound: enough steps to cross the whole grid (all faces) once
+    nstep_max = (nx + ny + 1) * nfaces
 
     # Grid-agnostic algorithm:
-    # First, find all four neighbors (subject to grid topology)
+    # First, find all four neighbors (using grid topology via `neighbor_maps`)
     # Second, throw away any that are further from the destination than the current point
     # Third, go to the valid neighbor that has the smallest angle from the arc path between the
     # start and end points (the shortest geodesic path)
-    j_prev, i_prev = j,i
-    while (i%nx != i2) or (j != j2):
-                
+    f_prev, j_prev, i_prev = f, j, i
+    while (f, j, i) != (f2, j2, i2):
+
         # safety precaution: exit after taking enough steps to have crossed the entire model grid
-        if ct > (nx+ny+1):
+        if ct > nstep_max:
             raise RuntimeError(f"Should have reached the endpoint by now.")
 
         d_current = distance_on_unit_sphere(
-                gridlon[j,i],
-                gridlat[j,i],
+                coord(gridlon, f, j, i),
+                coord(gridlat, f, j, i),
                 lon2,
                 lat2
             )
-        
+
         if d_current < 1.e-12:
             break
-        
-        if boundary["X"] == "periodic":
-            right = (j, (i+1)%nx)
-            left = (j, (i-1)%nx)
-        else:
-            right = (j, np.clip(i+1, 0, nx-1))
-            left = (j, np.clip(i-1, 0, nx-1))
-        down = (np.clip(j-1, 0, ny-1), i)
-        
-        if topology=="MOM-tripolar":
-            if j!=ny-1:
-                up = (j+1, i%nx)
-            else:
-                up = (j-1, (nx-1) - (i%nx))
-                
-        elif topology=="cartesian" or topology=="latlon":
-                up = (np.clip(j+1, 0, ny-1), i)
-        else:
-            raise ValueError("Only 'cartesian', 'latlon', and 'MOM-tripolar' grid topologies are currently supported.")
-        
-        neighbors = [right, left, down, up]
 
-        j_next, i_next = None, None
+        neighbors = [
+            neighbor("right", f, j, i),
+            neighbor("left",  f, j, i),
+            neighbor("down",  f, j, i),
+            neighbor("up",    f, j, i),
+        ]
+
+        next_pt = None
         smallest_angle = np.inf
         d_list = []
-        for (_j, _i) in neighbors:
+        for (_f, _j, _i) in neighbors:
             d = distance_on_unit_sphere(
-                gridlon[_j,_i],
-                gridlat[_j,_i],
+                coord(gridlon, _f, _j, _i),
+                coord(gridlat, _f, _j, _i),
                 lon2,
                 lat2
             )
             d_list.append(d/d_current)
             if d < d_current:
                 if d==0.: # We're done!
-                    j_next, i_next = _j, _i
+                    next_pt = (_f, _j, _i)
                     smallest_angle = 0.
                     break
                 # Instead of simply moving to the point that gets us closest to the target,
@@ -559,52 +635,57 @@ def infer_grid_path(i1, j1, i2, j2, gridlon, gridlat, boundary={"X":"periodic", 
                         lat2,
                         lon1,
                         lat1,
-                        gridlon[_j,_i],
-                        gridlat[_j,_i],
+                        coord(gridlon, _f, _j, _i),
+                        coord(gridlat, _f, _j, _i),
                     )
                     angle2 = spherical_angle(
                         lon1,
                         lat1,
                         lon2,
                         lat2,
-                        gridlon[_j,_i],
-                        gridlat[_j,_i],
+                        coord(gridlon, _f, _j, _i),
+                        coord(gridlat, _f, _j, _i),
                     )
                     angle = (angle1+angle2)/2.
                     if angle < smallest_angle:
-                        j_next, i_next = _j, _i
+                        next_pt = (_f, _j, _i)
                         smallest_angle = angle
-        
+
         # There can be some strange edge cases in which none of the neighboring points
         # actually get us closer to the target (e.g. when closing folds in the grid).
         # In these cases, simply pick the adjacent point that gets us closest, as long as
         # it was not our previous point (to avoid endless loops). This algorithm should be
         # guaranteed to always get us to the target point.
-        if (smallest_angle == np.inf) or (j_next, i_next) == (j_prev, i_prev):
-            if (j_prev, i_prev) in neighbors:
-                idx = neighbors.index((j_prev, i_prev))
+        if (smallest_angle == np.inf) or (next_pt == (f_prev, j_prev, i_prev)):
+            if (f_prev, j_prev, i_prev) in neighbors:
+                idx = neighbors.index((f_prev, j_prev, i_prev))
                 del neighbors[idx]
                 del d_list[idx]
-            
-            (j_next, i_next) = neighbors[np.argmin(d_list)]
 
-        j_prev, i_prev = j,i
-        
-        j = j_next
-        i = i_next
+            next_pt = neighbors[int(np.argmin(d_list))]
+
+        f_prev, j_prev, i_prev = f, j, i
+
+        f, j, i = next_pt
 
         i_c_seg.append(i)
         j_c_seg.append(j)
-        
+        f_c_seg.append(f)
+
         ct+=1
 
-    # create lat/lon vectors from i,j pairs
+    # create lat/lon vectors from (f,j,i) triples
     lons_c_seg = []
     lats_c_seg = []
-    for jj, ji in zip(j_c_seg, i_c_seg):
-        lons_c_seg.append(gridlon[jj, ji])
-        lats_c_seg.append(gridlat[jj, ji])
-    return np.array(i_c_seg), np.array(j_c_seg), np.array(lons_c_seg), np.array(lats_c_seg)
+    for ff, jj, ji in zip(f_c_seg, j_c_seg, i_c_seg):
+        lons_c_seg.append(coord(gridlon, ff, jj, ji))
+        lats_c_seg.append(coord(gridlat, ff, jj, ji))
+
+    i_c, j_c = np.array(i_c_seg), np.array(j_c_seg)
+    lons_c, lats_c = np.array(lons_c_seg), np.array(lats_c_seg)
+    if multitile:
+        return i_c, j_c, np.array(f_c_seg), lons_c, lats_c
+    return i_c, j_c, lons_c, lats_c
 
 
 def find_closest_grid_point(lon, lat, gridlon, gridlat):
@@ -622,8 +703,10 @@ def find_closest_grid_point(lon, lat, gridlon, gridlat):
     RETURNS:
     --------
 
-    iclose, jclose: integer
-        grid indices for geographical point of interest
+    For 2d (single-tile) grids:
+        iclose, jclose: integer grid indices for the geographical point of interest
+    For 3d (multi-tile) grids, additionally the face index:
+        iclose, jclose, fclose
     """
 
     if isinstance(gridlon, xr.core.dataarray.DataArray):
@@ -631,7 +714,11 @@ def find_closest_grid_point(lon, lat, gridlon, gridlat):
     if isinstance(gridlat, xr.core.dataarray.DataArray):
         gridlat = gridlat.values
     dist = distance_on_unit_sphere(lon, lat, gridlon, gridlat)
-    jclose, iclose = np.unravel_index(np.nanargmin(dist), gridlon.shape)
+    idx = np.unravel_index(np.nanargmin(dist), gridlon.shape)
+    if gridlon.ndim == 3:
+        fclose, jclose, iclose = idx
+        return iclose, jclose, fclose
+    jclose, iclose = idx
     return iclose, jclose
 
 def distance_on_unit_sphere(lon1, lat1, lon2, lat2, R=6.371e6, method="vincenty"):
