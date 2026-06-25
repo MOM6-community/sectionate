@@ -60,7 +60,140 @@ def get_geo_corners(grid):
     if any([len(v) == 0 for (k,v) in geo_coord_dict.items()]):
         raise ValueError("""grid._ds must contain two-dimensional ("X", "Y") coordinates including the strings "lon" and "lat", consistent with grid.coords.""")
     return {k:v[0] for (k,v) in geo_coord_dict.items()}
-    
+
+
+def symmetrize(grid, face_connections=None, fill_value=np.nan):
+    """Return a symmetric ('outer') equivalent of a non-symmetric C-grid.
+
+    sectionate operates on symmetric grids (cell corners on the 'outer' position,
+    one more point than centers along each axis) and on 'right'-staggered grids.
+    MITgcm-style grids -- notably the native ECCO lat-lon-cap -- place their
+    vorticity points on the 'left' (SW) corner, which is otherwise unsupported
+    (see `coord_dict`). This builds the missing high-side corner row/column by
+    padding the corner coordinates one cell using the grid's own topology
+    (periodic wrap, `face_connections`, or bipolar fold), yielding an exactly
+    equivalent symmetric grid that the rest of sectionate can consume.
+
+    Symmetric grids are returned unchanged. Only horizontal corner (vorticity)
+    coordinates are re-staggered: tracer-center coordinates and data variables
+    are carried over unchanged, while velocity-staggered variables (those on the
+    original corner dimension) are dropped.
+
+    Parameters
+    ----------
+    grid : xgcm.Grid
+        A C-grid whose X and Y axes share a corner position ('outer', 'right',
+        or 'left').
+    face_connections : dict or None
+        The multi-tile `face_connections` mapping, required to rebuild a
+        multi-tile grid (it cannot be recovered from `grid` in input form). Pass
+        the same dict used to build `grid`. Ignored for single-tile grids.
+    fill_value : scalar
+        Fill value for padded corner coordinates at genuine walls (default NaN).
+
+    Returns
+    -------
+    xgcm.Grid
+        A symmetric ('outer') grid.
+    """
+    import xgcm
+
+    pos = None
+    for p in ("outer", "right", "left"):
+        if (p in grid.axes["X"].coords) and (p in grid.axes["Y"].coords):
+            pos = p
+            break
+    if pos is None:
+        raise ValueError(
+            "Grid must share a corner position ('outer', 'right', or 'left') on "
+            "both the X and Y axes."
+        )
+    if pos == "outer":
+        return grid
+
+    ds = grid._ds
+    facedim = get_facedim(grid)
+    Xc, Yc = grid.axes["X"].coords["center"], grid.axes["Y"].coords["center"]
+    Xq, Yq = grid.axes["X"].coords[pos], grid.axes["Y"].coords[pos]
+
+    # 'left' corners need the missing east/north (high-side) corner; 'right'
+    # corners need the missing west/south (low-side) corner.
+    width = (0, 1) if pos == "left" else (1, 0)
+    boundary = {ax: grid.axes[ax].boundary for ax in grid.axes}
+    boundary_width = {"X": width, "Y": width}
+
+    def _pad(a):
+        if hasattr(grid, "pad"):
+            return grid.pad(a, boundary_width=boundary_width, boundary=boundary,
+                            fill_value=fill_value)
+        from xgcm.padding import pad as _module_pad
+        return _module_pad(a, grid, boundary_width, boundary=boundary,
+                           fill_value=fill_value)
+
+    def _geo(xdim, ydim):
+        out = {}
+        for axis, key in zip(["X", "Y"], ["lon", "lat"]):
+            matches = [c for c in ds.coords
+                       if (key in c.lower())
+                       and (xdim in ds[c].dims) and (ydim in ds[c].dims)]
+            if not matches:
+                raise ValueError(
+                    f'Could not find a "{key}" coordinate on dims ({xdim}, {ydim}).'
+                )
+            out[axis] = matches[0]
+        return out
+
+    corner_geo = _geo(Xq, Yq)
+    center_geo = _geo(Xc, Yc)
+
+    Xo, Yo = f"{Xq}_outer", f"{Yq}_outer"
+    corner_dims = (facedim, Yo, Xo) if facedim is not None else (Yo, Xo)
+
+    def _outer_values(name):
+        padded = _pad(ds[name])
+        order = ([facedim] if facedim is not None else []) + [Yq, Xq]
+        return padded.transpose(*order).values
+
+    coords = {
+        Xc: np.arange(ds.sizes[Xc]),
+        Yc: np.arange(ds.sizes[Yc]),
+        Xo: np.arange(ds.sizes[Xq] + 1),
+        Yo: np.arange(ds.sizes[Yq] + 1),
+        center_geo["X"]: (
+            (facedim, Yc, Xc) if facedim is not None else (Yc, Xc),
+            ds[center_geo["X"]].transpose(*(([facedim] if facedim else []) + [Yc, Xc])).values,
+        ),
+        center_geo["Y"]: (
+            (facedim, Yc, Xc) if facedim is not None else (Yc, Xc),
+            ds[center_geo["Y"]].transpose(*(([facedim] if facedim else []) + [Yc, Xc])).values,
+        ),
+        "geolon_c": (corner_dims, _outer_values(corner_geo["X"])),
+        "geolat_c": (corner_dims, _outer_values(corner_geo["Y"])),
+    }
+    if facedim is not None:
+        coords[facedim] = ds[facedim].values
+
+    dss = xr.Dataset(coords=coords)
+
+    # Carry over tracer-center data variables (those off the old corner dims).
+    for v in ds.data_vars:
+        if (Xq not in ds[v].dims) and (Yq not in ds[v].dims):
+            dss[v] = ds[v]
+
+    xcoords = {"X": {"center": Xc, "outer": Xo},
+               "Y": {"center": Yc, "outer": Yo}}
+    kwargs = dict(coords=xcoords, boundary=boundary, fill_value=fill_value,
+                  autoparse_metadata=False)
+    if facedim is not None:
+        if face_connections is None:
+            raise ValueError(
+                "face_connections is required to symmetrize a multi-tile grid; "
+                "pass the same mapping used to build `grid`."
+            )
+        kwargs["face_connections"] = face_connections
+    return xgcm.Grid(dss, **kwargs)
+
+
 def coord_dict(grid):
     """
     Find names of "X" and "Y" dimension variables from grid dataset.
