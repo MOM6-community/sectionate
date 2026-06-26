@@ -298,9 +298,9 @@ def _check_supported_topology(grid):
     bipolar-fold release) -- which sectionate handles natively via xgcm's fold padding.
     """
     facedim = grid._facedim
-    for axis in grid.axes:
-        connections = getattr(grid.axes[axis], "_connections", None) or {}
-        for face, sides in connections.items():
+    connections = (getattr(grid, "_face_connections", None) or {}).get(facedim, {})
+    for face, axis_sides in connections.items():
+        for sides in axis_sides.values():
             for side in sides:
                 if side is None:
                     continue
