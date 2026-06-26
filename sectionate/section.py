@@ -12,6 +12,11 @@ from .gridutils import (
 # the same point: far below any real grid spacing, far above float round-trip error.
 COINCIDENT_TOLERANCE_M = 1.e-3
 
+# Walk determinism tolerance. Curve-deviation differences within this absolute tolerance
+# (radians, for both curve types) are treated as tied and broken deterministically by
+# index, so the path is independent of platform and of travel direction.
+WALK_DEVIATION_ATOL = 1.e-9
+
 class Section():
     """A named hydrographic section"""
     def __init__(self, name, coords, children = {}, parent = None):
@@ -238,9 +243,9 @@ def join_sections(name, *sections, **kwargs):
             
     return section
         
-def grid_section(grid, lons, lats):
+def grid_section(grid, lons, lats, curve="great circle"):
     """
-    Compute composite section along model `grid` velocity faces that approximates geodesic paths
+    Compute composite section along model `grid` velocity faces that approximates paths
     between consecutive points defined by (lons, lats).
 
     The grid topology is inferred entirely from the `grid` metadata: each axis' `boundary`
@@ -255,7 +260,11 @@ def grid_section(grid, lons, lats):
     lons: list or np.ndarray
         Longitudes, in degrees, of consecutive vertices defining a piece-wise geodesic section.
     lats: list or np.ndarray
-        Latitudes, in degrees (in range [-90, 90]), of consecutive vertices defining a piece-wise geodesic section.
+        Latitudes, in degrees (in range [-90, 90]), of consecutive vertices defining a piece-wise section.
+    curve: str
+        Curve followed between consecutive vertices: "great circle" (default, the geodesic) or
+        "latitude circle" (constant latitude, marching in longitude). Each segment must span
+        less than 180 degrees, otherwise the direction is ambiguous and a ValueError is raised.
 
     Returns
     -------
@@ -285,6 +294,7 @@ def grid_section(grid, lons, lats):
         lons,
         lats,
         neighbor_maps=neighbor_maps,
+        curve=curve,
     )
 
 
@@ -319,6 +329,7 @@ def create_section_composite(
     lons,
     lats,
     neighbor_maps,
+    curve="great circle",
     ):
     """
     Compute composite section along velocity faces, as defined by coordinates of vorticity points (gridlon, gridlat),
@@ -373,6 +384,7 @@ def create_section_composite(
             lons[k + 1],
             lats[k + 1],
             neighbor_maps=neighbor_maps,
+            curve=curve,
         )
         if multitile:
             i_c_seg, j_c_seg, f_c_seg, lons_c_seg, lats_c_seg = seg
@@ -396,7 +408,7 @@ def create_section_composite(
 
     return i_c.astype(np.int64), j_c.astype(np.int64), lons_c, lats_c
 
-def create_section(gridlon, gridlat, lonstart, latstart, lonend, latend, neighbor_maps):
+def create_section(gridlon, gridlat, lonstart, latstart, lonend, latend, neighbor_maps, curve="great circle"):
     """
     Compute a section segment along velocity faces, as defined by coordinates of vorticity points (gridlon, gridlat),
     that most closely approximates the geodesic path between points (lonstart, latstart) and (lonend, latend).
@@ -437,9 +449,42 @@ def create_section(gridlon, gridlat, lonstart, latstart, lonend, latend, neighbo
         gridlon,
         gridlat,
         neighbor_maps=neighbor_maps,
+        curve=curve,
     )
 
-def infer_grid_path_from_geo(lonstart, latstart, lonend, latend, gridlon, gridlat, neighbor_maps):
+def _check_segment_span(lon1, lat1, lon2, lat2, curve):
+    """Raise if a section segment's direction between its endpoints is ambiguous.
+
+    A unique *directed* shortest path needs the two endpoints to be less than half a
+    circle apart:
+
+    - "latitude circle": the longitude change must be less than 180 degrees; at or beyond
+      that the east/west direction is equally far either way (and a full circle is
+      degenerate). Longitudes are taken as given, so write a >180-degree arc with one or
+      more intermediate waypoints (e.g. split 0 -> 270 into 0 -> 135 -> 270).
+    - "great circle": the endpoints must not be (near-)antipodal, where infinitely many
+      geodesics connect them.
+    """
+    if curve == "latitude circle":
+        dlon = abs(lon2 - lon1)
+        if dlon >= 180.:
+            raise ValueError(
+                f"Latitude-circle segment from lon={lon1} to lon={lon2} spans {dlon} "
+                "degrees of longitude; each segment must span less than 180 degrees, "
+                "otherwise the east/west direction is ambiguous. Add intermediate "
+                "waypoints to subdivide longer arcs."
+            )
+    else:
+        sep = np.rad2deg(distance_on_unit_sphere(lon1, lat1, lon2, lat2, R=1.))
+        if sep >= 180. - 1.e-9:
+            raise ValueError(
+                f"Great-circle segment from ({lon1}, {lat1}) to ({lon2}, {lat2}) is "
+                f"(near-)antipodal (separation ~{sep:.4f} degrees); the geodesic "
+                "direction is ambiguous. Add an intermediate waypoint to disambiguate."
+            )
+
+
+def infer_grid_path_from_geo(lonstart, latstart, lonend, latend, gridlon, gridlat, neighbor_maps, curve="great circle"):
     """
     Find the grid indices (and coordinates) of vorticity points that most closely approximates
     the geodesic path between points (lonstart, latstart) and (lonend, latend).
@@ -473,6 +518,8 @@ def infer_grid_path_from_geo(lonstart, latstart, lonend, latend, gridlon, gridla
         (lons_c, lats_c) are the corresponding longitude and latitudes.
     """
 
+    _check_segment_span(lonstart, latstart, lonend, latend, curve)
+
     multitile = np.ndim(gridlon) == 3
     if multitile:
         istart, jstart, fstart = find_closest_grid_point(lonstart, latstart, gridlon, gridlat)
@@ -490,12 +537,13 @@ def infer_grid_path_from_geo(lonstart, latstart, lonend, latend, gridlon, gridla
         gridlon,
         gridlat,
         neighbor_maps=neighbor_maps,
+        curve=curve,
         f1=fstart,
         f2=fend,
     )
 
 
-def infer_grid_path(i1, j1, i2, j2, gridlon, gridlat, neighbor_maps, f1=None, f2=None):
+def infer_grid_path(i1, j1, i2, j2, gridlon, gridlat, neighbor_maps, f1=None, f2=None, curve="great circle"):
     """
     Find the grid indices (and coordinates) of vorticity points that most closely approximate
     the geodesic path between the starting and ending corner points.
@@ -567,6 +615,37 @@ def infer_grid_path(i1, j1, i2, j2, gridlon, gridlat, neighbor_maps, f1=None, f2
     lon1, lat1 = coord(gridlon, f1, j1, i1), coord(gridlat, f1, j1, i1)
     lon2, lat2 = coord(gridlon, f2, j2, i2), coord(gridlat, f2, j2, i2)
 
+    # Per-curve metrics used by the deterministic neighbor selection below.
+    #  - progress(lon, lat): remaining distance to the segment endpoint (smaller = nearer);
+    #    admits only neighbors that do not move away from the endpoint.
+    #  - deviation(lon, lat): how far a candidate lies from the desired curve between the
+    #    endpoints (smaller = better); chooses among admitted neighbors. It is symmetric in
+    #    the two endpoints so the path does not depend on travel direction, and is in radians
+    #    for both curve types so WALK_DEVIATION_ATOL is meaningful for both.
+    # Physical coincidence with the endpoint (the seam-twin stop) always uses true geodesic
+    # distance, independent of `curve`.
+    if curve == "great circle":
+        def progress(lon, lat):
+            return distance_on_unit_sphere(lon, lat, lon2, lat2)
+        def deviation(lon, lat):
+            return (spherical_angle(lon2, lat2, lon1, lat1, lon, lat)
+                    + spherical_angle(lon1, lat1, lon2, lat2, lon, lat))
+    elif curve == "latitude circle":
+        def progress(lon, lat):
+            # monotonic in |delta-lon| over each (sub-180-degree) segment; direction-symmetric.
+            return np.sin(np.deg2rad((lon - lon2) / 2.)) ** 2
+        def deviation(lon, lat):
+            # angular distance off the constant-latitude curve through the endpoints (radians).
+            return np.deg2rad(abs(lat - lat1)) + np.deg2rad(abs(lat - lat2))
+    else:
+        raise ValueError(
+            f"curve must be 'great circle' or 'latitude circle'; got {curve!r}."
+        )
+
+    def order_key(pt):
+        _f, _j, _i = pt
+        return (-1 if _f is None else _f, _j, _i)
+
     # init loop position to starting point
     f, j, i = f1, j1, i1
 
@@ -579,11 +658,12 @@ def infer_grid_path(i1, j1, i2, j2, gridlon, gridlat, neighbor_maps, f1=None, f2
     # safety bound: enough steps to cross the whole grid (all faces) once
     nstep_max = (nx + ny + 1) * nfaces
 
-    # Grid-agnostic algorithm:
-    # First, find all four neighbors (using grid topology via `neighbor_maps`)
-    # Second, throw away any that are further from the destination than the current point
-    # Third, go to the valid neighbor that has the smallest angle from the arc path between the
-    # start and end points (the shortest geodesic path)
+    # Grid-agnostic algorithm (see the per-step selection below):
+    # First, find all four neighbors (using grid topology via `neighbor_maps`).
+    # Second, keep those strictly closer to the endpoint (plus any seam twin of the current
+    #   point), excluding the previous point.
+    # Third, step to the admitted neighbor closest to the desired `curve`, with a
+    #   deterministic, direction-independent tie-break.
     f_prev, j_prev, i_prev = f, j, i
     while (f, j, i) != (f2, j2, i2):
 
@@ -607,69 +687,72 @@ def infer_grid_path(i1, j1, i2, j2, gridlon, gridlat, neighbor_maps, f1=None, f2
         if d_current < COINCIDENT_TOLERANCE_M:
             break
 
+        here = (f, j, i)
         neighbors = [
             neighbor("right", f, j, i),
             neighbor("left",  f, j, i),
             neighbor("down",  f, j, i),
             neighbor("up",    f, j, i),
         ]
+        prev = (f_prev, j_prev, i_prev)
+        # A neighbor equal to the current index is an unconnected wall (`build_neighbor_maps`
+        # represents a wall as the point itself); never step onto it. Likewise never step
+        # back to the point we came from.
+        skip = {here, prev}
 
+        # Step straight onto the endpoint (or its physical twin across a seam) as soon as a
+        # neighbor coincides with it -- this also avoids the degenerate `deviation` evaluated
+        # exactly at the endpoint.
         next_pt = None
-        smallest_angle = np.inf
-        d_list = []
-        for (_f, _j, _i) in neighbors:
-            d = distance_on_unit_sphere(
-                coord(gridlon, _f, _j, _i),
-                coord(gridlat, _f, _j, _i),
-                lon2,
-                lat2
-            )
-            d_list.append(d/d_current)
-            if d < d_current:
-                if d==0.: # We're done!
-                    next_pt = (_f, _j, _i)
-                    smallest_angle = 0.
-                    break
-                # Instead of simply moving to the point that gets us closest to the target,
-                # a more robust approach is to pick, among the points that do get us closer,
-                # the one that most closely follows the great circle between the start and
-                # end points of the section. We average the angles relative to both end
-                # points so that the shortest path is unique and insensitive to which direction
-                # the section is traveled.
-                else:
-                    angle1 = spherical_angle(
-                        lon2,
-                        lat2,
-                        lon1,
-                        lat1,
-                        coord(gridlon, _f, _j, _i),
-                        coord(gridlat, _f, _j, _i),
-                    )
-                    angle2 = spherical_angle(
-                        lon1,
-                        lat1,
-                        lon2,
-                        lat2,
-                        coord(gridlon, _f, _j, _i),
-                        coord(gridlat, _f, _j, _i),
-                    )
-                    angle = (angle1+angle2)/2.
-                    if angle < smallest_angle:
-                        next_pt = (_f, _j, _i)
-                        smallest_angle = angle
+        for nb in neighbors:
+            if nb in skip:
+                continue
+            if distance_on_unit_sphere(
+                coord(gridlon, *nb), coord(gridlat, *nb), lon2, lat2
+            ) < COINCIDENT_TOLERANCE_M:
+                next_pt = nb
+                break
 
-        # There can be some strange edge cases in which none of the neighboring points
-        # actually get us closer to the target (e.g. when closing folds in the grid).
-        # In these cases, simply pick the adjacent point that gets us closest, as long as
-        # it was not our previous point (to avoid endless loops). This algorithm should be
-        # guaranteed to always get us to the target point.
-        if (smallest_angle == np.inf) or (next_pt == (f_prev, j_prev, i_prev)):
-            if (f_prev, j_prev, i_prev) in neighbors:
-                idx = neighbors.index((f_prev, j_prev, i_prev))
-                del neighbors[idx]
-                del d_list[idx]
-
-            next_pt = neighbors[int(np.argmin(d_list))]
+        if next_pt is None:
+            # Admit a neighbor (other than the one we came from) if it gets us strictly
+            # closer to the endpoint, OR if it is a seam twin of the current point -- the
+            # same physical location reached by a different index across a periodic or fold
+            # seam. The twin is a valid zero-length step that does *not* reduce the distance,
+            # so a strict "closer than current" test admits it only by sub-ULP rounding luck
+            # (the bug that made paths flip across numpy/libm versions); admitting it
+            # explicitly by physical coincidence makes that deterministic, without admitting
+            # genuinely-distinct near-equidistant neighbors (which would wander off a normal
+            # path). Among the admitted neighbors take the one closest to the desired curve,
+            # breaking near-ties (within WALK_DEVIATION_ATOL) deterministically by index.
+            p_current = progress(coord(gridlon, f, j, i), coord(gridlat, f, j, i))
+            cur_lon, cur_lat = coord(gridlon, f, j, i), coord(gridlat, f, j, i)
+            cand = []
+            for nb in neighbors:
+                if nb in skip:
+                    continue
+                nb_lon, nb_lat = coord(gridlon, *nb), coord(gridlat, *nb)
+                seam_twin = distance_on_unit_sphere(nb_lon, nb_lat, cur_lon, cur_lat) < COINCIDENT_TOLERANCE_M
+                if (progress(nb_lon, nb_lat) < p_current) or seam_twin:
+                    dev = deviation(nb_lon, nb_lat)
+                    if np.isfinite(dev):
+                        cand.append((dev, order_key(nb), nb))
+            if cand:
+                best_dev = min(c[0] for c in cand)
+                next_pt = min(
+                    (c for c in cand if c[0] <= best_dev + WALK_DEVIATION_ATOL),
+                    key=lambda c: c[1],
+                )[2]
+            else:
+                # No admissible forward move (e.g. closing a fold): take the closest
+                # non-wall, non-previous neighbor, with a deterministic index tie-break.
+                alt = [nb for nb in neighbors if nb not in skip] or [nb for nb in neighbors if nb != prev]
+                next_pt = min(
+                    alt,
+                    key=lambda nb: (
+                        distance_on_unit_sphere(coord(gridlon, *nb), coord(gridlat, *nb), lon2, lat2),
+                        order_key(nb),
+                    ),
+                )
 
         f_prev, j_prev, i_prev = f, j, i
 
