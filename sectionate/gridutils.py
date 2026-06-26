@@ -368,11 +368,11 @@ def build_neighbor_maps(grid, geocorners):
         imap = np.where(wall, own_i, imap).astype(np.int64)
         maps[d] = (fmap, jmap, imap)
 
-    # The reciprocity check guards against xgcm mis-filling halos for complex
-    # rotated/reversed multi-tile `face_connections`. Single-tile padding (periodic,
-    # fill/extend, bipolar fold) is straightforward and well-tested upstream, and the
-    # fold deliberately identifies seam corners (i <-> mirror(i)) in a way that is not
-    # index-reciprocal, so we only validate multi-tile maps.
+    # Validate that multi-tile `face_connections` produced a self-consistent
+    # neighbor map. Single-tile padding (periodic, fill/extend, bipolar fold) is
+    # well-tested upstream, and the fold deliberately identifies seam corners
+    # (i <-> mirror(i)) in a way that is not index-reciprocal, so we only validate
+    # multi-tile maps.
     if multitile:
         _validate_reciprocity(maps, own_f, own_j, own_i)
     return maps
@@ -381,14 +381,10 @@ def build_neighbor_maps(grid, geocorners):
 def _validate_reciprocity(maps, own_f, own_j, own_i):
     """
     Verify that the neighbor maps describe a consistent topology: if B is a
-    (non-wall) neighbor of A, then A must be one of B's four neighbors.
-
-    xgcm's padding can mis-fill halos for complex reversed/rotated face
-    connections (its behavior is even hash-seed dependent for some
-    configurations, e.g. a full cubed sphere). Such a failure would otherwise
-    yield silently-wrong sections, so we detect it here and refuse rather than
-    return garbage neighbors. Handles both single-tile (`own_f is None`, 2-D
-    index maps) and multi-tile (3-D) maps.
+    (non-wall) neighbor of A, then A must be one of B's four neighbors. An
+    inconsistent map would yield silently-wrong sections, so we detect it and
+    refuse rather than return garbage neighbors. Handles both single-tile
+    (`own_f is None`, 2-D index maps) and multi-tile (3-D) maps.
     """
     multitile = own_f is not None
 
@@ -412,8 +408,6 @@ def _validate_reciprocity(maps, own_f, own_j, own_i):
         if np.any(not_wall & ~reciprocated):
             raise NotImplementedError(
                 "Could not derive a consistent neighbor topology from this grid's "
-                "topology metadata. This is a known limitation of xgcm's padding for "
-                "complex rotated/reversed connections (e.g. a full cubed sphere or the "
-                "lat-lon-cap arctic cap). Sections on grids with simpler topology "
-                "are supported."
+                "`face_connections` metadata (the multi-tile neighbor maps are not "
+                "reciprocal). Sections on grids with simpler topology are supported."
             )
