@@ -4,7 +4,7 @@ import xarray as xr
 import dask
 
 from .gridutils import (
-    check_symmetric, coord_dict, get_geo_corners, get_facedim, build_neighbor_maps,
+    corner_offset, coord_dict, get_geo_corners, get_facedim, build_neighbor_maps,
     NEIGHBOR_DIRECTIONS,
 )
 from .section import distance_on_unit_sphere, COINCIDENT_TOLERANCE_M
@@ -39,13 +39,13 @@ def _in_velocity_range(var, vi, vj, ranges):
     return (0 <= vi < ranges["Xq"]) and (0 <= vj < ranges["Yc"])  # umo at (X-corner, Y-center)
 
 
-def _anchor_velocity(d, f, j, i, symmetric):
+def _anchor_velocity(d, f, j, i, offset):
     """Staggered velocity index for the section edge leaving corner (f,j,i) in direction d,
-    read in face f's own frame. Returns (var, vi, vj)."""
+    read in face f's own frame. `offset` is the corner->velocity index shift from
+    `gridutils.corner_offset` (0 for 'outer'/'left', 1 for 'right'). Returns (var, vi, vj)."""
     var, di, dj = _EDGE_VEL[d]
     vi, vj = i + di, j + dj
-    if not symmetric:  # non-symmetric grids shift the staggered velocity index by one
-        vi, vj = (vi + 1, vj) if var == "V" else (vi, vj + 1)
+    vi, vj = (vi + offset, vj) if var == "V" else (vi, vj + offset)
     return var, vi, vj
 
 
@@ -79,7 +79,7 @@ def _left_sign(var, fv, jc, ic, A, B, glon, glat):
     return 1 if (tx * vy - ty * vx) > 0 else -1  # cross(travel, vdir) > 0  <=>  vdir is left
 
 
-def _uv_for_edge(A, B, neighbor_maps, symmetric, ranges, glon, glat):
+def _uv_for_edge(A, B, neighbor_maps, offset, ranges, glon, glat):
     """
     Velocity face for the directed section edge from corner A=(fA,jA,iA) to B=(fB,jB,iB).
     Returns (var, i, j, face, Lsign), where Lsign is +1 if the stored velocity's positive
@@ -99,14 +99,14 @@ def _uv_for_edge(A, B, neighbor_maps, symmetric, ranges, glon, glat):
     seam = fA != fB
 
     # 1. source-frame velocity (always valid within a face)
-    var_s, vi_s, vj_s = _anchor_velocity(d, fA, jA, iA, symmetric)
+    var_s, vi_s, vj_s = _anchor_velocity(d, fA, jA, iA, offset)
     if not seam or _in_velocity_range(var_s, vi_s, vj_s, ranges):
         Lsign = _left_sign(var_s, fA, jA, iA, A, B, glon, glat)
         return var_s, int(vi_s), int(vj_s), int(fA), Lsign
 
     # 2. destination-frame velocity (the edge sits on B's d2-side)
     d2 = _edge_direction(B, neighbor_maps)[A]  # direction from B back to A
-    var_d, vi_d, vj_d = _anchor_velocity(d2, fB, jB, iB, symmetric)
+    var_d, vi_d, vj_d = _anchor_velocity(d2, fB, jB, iB, offset)
     if _in_velocity_range(var_d, vi_d, vj_d, ranges):
         Lsign = _left_sign(var_d, fB, jB, iB, A, B, glon, glat)
         return var_d, int(vi_d), int(vj_d), int(fB), Lsign
@@ -119,7 +119,8 @@ def uvindices_from_qindices(grid, i_c, j_c, f_c=None):
     """
     Find the `grid` indices of the N-1 velocity points defined by the consecutive indices of
     N vorticity points. Follows MOM6 conventions (https://mom6.readthedocs.io/en/main/api/generated/pages/Horizontal_Indexing.html),
-    automatically checking `grid` metadata to determine whether the grid is symmetric or non-symmetric.
+    automatically reading the vorticity corner position from `grid` metadata ('outer'/symmetric,
+    'right'/non-symmetric, or 'left'/MITgcm-ECCO; see `gridutils.corner_offset`).
 
     PARAMETERS:
     -----------
@@ -158,7 +159,7 @@ def uvindices_from_qindices(grid, i_c, j_c, f_c=None):
         "Yinc":np.zeros(nsec-1, dtype=bool),
         "Xinc":np.zeros(nsec-1, dtype=bool)
     }
-    symmetric = check_symmetric(grid)
+    offset = corner_offset(grid)
     geocorners = get_geo_corners(grid)
     glon = np.asarray(geocorners["X"].values)
     glat = np.asarray(geocorners["Y"].values)
@@ -183,7 +184,7 @@ def uvindices_from_qindices(grid, i_c, j_c, f_c=None):
         for k in range(0, nsec-1):
             A = (int(f_c[k]), int(j_c[k]), int(i_c[k]))
             B = (int(f_c[k+1]), int(j_c[k+1]), int(i_c[k+1]))
-            var, vi, vj, face, Lsign = _uv_for_edge(A, B, neighbor_maps, symmetric, ranges, glon, glat)
+            var, vi, vj, face, Lsign = _uv_for_edge(A, B, neighbor_maps, offset, ranges, glon, glat)
             uvindices["var"][k] = var
             uvindices["i"][k] = vi
             uvindices["j"][k] = vj
@@ -204,8 +205,8 @@ def uvindices_from_qindices(grid, i_c, j_c, f_c=None):
                 "Yinc": Yinc,
                 "Xinc": Xinc,
             }
-            uvindex["i"] += (1 if not(symmetric) and zonal else 0)
-            uvindex["j"] += (1 if not(symmetric) and not(zonal) else 0)
+            uvindex["i"] += (offset if zonal else 0)
+            uvindex["j"] += (offset if not(zonal) else 0)
             for (key, v) in uvindices.items():
                 v[k] = uvindex[key]
 
@@ -681,7 +682,7 @@ def is_mask_inside(mask, grid, sect, idx=0):
     --------
     positive_in : bool
     """
-    symmetric = check_symmetric(grid)
+    offset = corner_offset(grid)
     coords = coord_dict(grid)
     facedim = get_facedim(grid)
     fsel = {facedim: int(sect["face"][idx])} if (facedim is not None and "face" in sect) else {}
@@ -689,7 +690,7 @@ def is_mask_inside(mask, grid, sect, idx=0):
         i = (
             sect["i"][idx]
             - (1 if sect["Usign"][idx].values==-1. else 0)
-            + (1 if not(symmetric) else 0)
+            + offset
         )
         j = sect["j"][idx]
         if 0<=i<=grid._ds[coords["X"]["center"]].size-1:
@@ -715,7 +716,7 @@ def is_mask_inside(mask, grid, sect, idx=0):
         j = (
             sect["j"][idx]
             - (1 if sect["Vsign"][idx].values==-1. else 0)
-            + (1 if not(symmetric) else 0)
+            + offset
         )
         if 0<=j<=grid._ds[coords["Y"]["center"]].size-1:
             positive_in = mask.isel({

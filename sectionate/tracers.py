@@ -5,7 +5,7 @@ from .transports import (
 )
 
 from .gridutils import (
-    check_symmetric,
+    corner_offset,
     coord_dict,
     get_facedim
 )
@@ -43,7 +43,7 @@ def extract_tracer(
     
     da=grid._ds[name]
     coords = coord_dict(grid)
-    symmetric = check_symmetric(grid)
+    offset = corner_offset(grid)
 
     # get indices of UV points from broken line
     uvindices = uvindices_from_qindices(grid, i_c, j_c, f_c=f_c)
@@ -58,7 +58,7 @@ def extract_tracer(
     facedim = get_facedim(grid) if f_c is not None else None
     fsel = {facedim: xr.DataArray(uvindices["face"], dims=sect_coord)} if facedim is not None else {}
 
-    increment = 1 if symmetric else 0
+    increment = 1 - offset
     usel_left  = {coords["X"]["center"]: np.mod(section["i"]-increment  , da[coords["X"]["center"]].size),
                   coords["Y"]["center"]: np.mod(section["j"]            , da[coords["Y"]["center"]].size), **fsel}
     usel_right = {coords["X"]["center"]: np.mod(section["i"]-increment+1, da[coords["X"]["center"]].size),
