@@ -31,6 +31,17 @@ parallel agents where it is faster:
    including docstrings, `README.md`, files under `docs/`, the example notebooks, and this
    `CLAUDE.md` — and update them so docs and code stay in sync.
 
+## Keeping pull requests in sync
+
+When pushing a new commit to a branch that already has an open PR, also update that PR's
+top-comment description so it stays consistent with the most recent commit:
+
+- Revise the summary / "Changes" prose to reflect what the latest commit actually did.
+- Update any task/status checklist — check off completed items (`- [ ]` → `- [x]`) and add
+  new ones as needed.
+- Edit it in place with `gh pr edit <number> --repo <owner>/<repo> --body-file <file>` (find
+  the PR for the current branch with `gh pr view --json number,url`).
+
 ## Architecture
 
 The package is organized around a pipeline: define sections → map to grid → compute transports/tracers.
