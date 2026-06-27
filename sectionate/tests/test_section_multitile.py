@@ -44,6 +44,29 @@ def two_face_x_to_x(Nc=6):
     return _make_grid(lon, lat, fc)
 
 
+def left_two_tile_x_to_y(Nc=5):
+    """A native 'left'-staggered (MITgcm/ECCO) 2-tile grid whose tiles meet at a
+    rotated seam: face0's +X edge connects to face1's Y axis. Carries both
+    tracer-center and corner coordinates (the 'left' correction in
+    `build_neighbor_maps` needs the centers)."""
+    ng = Nc  # native 'left' corners are the same size as centers
+    LONc = np.zeros((2, ng, ng)); LATc = np.zeros((2, ng, ng))
+    LON = np.zeros((2, Nc, Nc)); LAT = np.zeros((2, Nc, Nc))
+    for f in range(2):
+        off = 100 * f
+        LONc[f] = off + np.arange(ng)[None, :]; LATc[f] = off + np.arange(ng)[:, None]
+        LON[f] = off + np.arange(Nc)[None, :] + 0.5; LAT[f] = off + np.arange(Nc)[:, None] + 0.5
+    ds = xr.Dataset(coords={
+        "i": ("i", np.arange(Nc)), "j": ("j", np.arange(Nc)),
+        "i_g": ("i_g", np.arange(ng)), "j_g": ("j_g", np.arange(ng)), "face": ("face", [0, 1]),
+        "geolon": (("face", "j", "i"), LON), "geolat": (("face", "j", "i"), LAT),
+        "geolon_c": (("face", "j_g", "i_g"), LONc), "geolat_c": (("face", "j_g", "i_g"), LATc)})
+    fc = {"face": {0: {"X": (None, (1, "Y", False))}, 1: {"Y": ((0, "X", False), None)}}}
+    return xgcm.Grid(
+        ds, coords={"X": {"center": "i", "left": "i_g"}, "Y": {"center": "j", "left": "j_g"}},
+        boundary="fill", fill_value=np.nan, face_connections=fc, autoparse_metadata=False)
+
+
 def two_face_x_to_y(Nc=4):
     """face0 right-X connects to face1 Y (a 90-degree rotation)."""
     ng = Nc + 1
@@ -121,6 +144,43 @@ def test_neighbor_maps_x_to_y_rotation_and_reversal():
     assert np.all(jmap[0][:, -1] == 0)
     # ...with the tangential index reversed (j -> n-1-j).
     assert np.all(imap[0][:, -1] == (n - 1) - np.arange(n))
+
+
+def test_neighbor_maps_left_grid_rotated_seam_are_edge_adjacent():
+    """On a native 'left'-staggered grid, the vorticity lattice sits half a cell
+    from the centers a face seam is defined on, so xgcm's corner-array padding lands
+    cross-tile neighbors one corner off across a rotated/reversed seam (a *diagonal*
+    instead of edge-adjacent corner). `build_neighbor_maps` must correct this: every
+    interior corner's four neighbors must be EDGE-adjacent -- sharing the two cells
+    of their common edge -- not merely diagonal. (Symmetric 'outer' grids never hit
+    this; their seam vorticity points are shared.)"""
+    from xgcm.padding import pad
+    grid = left_two_tile_x_to_y(Nc=5)
+    maps = build_neighbor_maps(grid, get_geo_corners(grid))
+
+    nf, ny, nx = 2, 5, 5
+    cid = xr.DataArray(np.arange(nf * ny * nx, dtype=float).reshape(nf, ny, nx),
+                       dims=("face", "j", "i"), coords={"face": [0, 1]})
+    bw = {ax: (1, 1) for ax in grid.axes}
+    bdy = {ax: grid.axes[ax].boundary for ax in grid.axes}
+    C = pad(cid, grid, bw, boundary=bdy, fill_value=np.nan).transpose("face", ..., "j", "i").values
+
+    def cells(f, j, i):  # the (up to four) cells touching corner (f, j, i)
+        v = (C[f, j, i], C[f, j, i + 1], C[f, j + 1, i], C[f, j + 1, i + 1])
+        return frozenset(int(x) for x in v if not np.isnan(x))
+
+    for d in NEIGHBOR_DIRECTIONS:
+        fm, jm, im = maps[d]
+        for f in range(nf):
+            for j in range(ny):
+                for i in range(nx):
+                    nb = (int(fm[f, j, i]), int(jm[f, j, i]), int(im[f, j, i]))
+                    if nb == (f, j, i):
+                        continue  # wall
+                    a, b = cells(f, j, i), cells(*nb)
+                    # an interior corner (all four cells real) must share an EDGE (2 cells)
+                    if len(a) == 4 and len(b) == 4:
+                        assert len(a & b) >= 2, f"{d}: ({f},{j},{i}) -> {nb} only diagonally adjacent"
 
 
 def test_cubed_sphere_reciprocal_or_raises():
