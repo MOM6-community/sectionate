@@ -18,19 +18,18 @@ native 'left' staggering directly (see ``sectionate.gridutils.corner_position`` 
 """
 
 import os
-import glob
 import hashlib
 import urllib.request
-import numpy as np
 import xarray as xr
 import xgcm
 
-# Zenodo record holding the redistributed ECCO V4r4 subset (version 2.0.0).
+# Zenodo record holding the redistributed ECCO V4r4 subset. ZENODO_RECORD_ID is the
+# version-specific record (v2.0.0); ZENODO_CONCEPT_DOI is the version-independent
+# (citeable) DOI that always resolves to the latest version.
 ZENODO_RECORD_ID = "21051920"
 ZENODO_CONCEPT_DOI = "10.5281/zenodo.21051424"
 
 ECCO_GEOMETRY_FILE = "GRID_GEOMETRY_ECCO_V4r4_native_llc0090.nc"
-ECCO_VOLUME_FLUX_GLOB = "OCEAN_3D_VOLUME_FLUX_mon_mean_*_ECCO_V4r4_native_llc0090.nc"
 
 # Published MD5 checksums (from the Zenodo record) for the files this example needs:
 # the grid geometry and the twelve 2010 monthly volume-flux files.
@@ -96,12 +95,21 @@ def _fetch_from_zenodo(filename, data_dir="../data"):
     os.makedirs(data_dir, exist_ok=True)
     url = f"https://zenodo.org/records/{ZENODO_RECORD_ID}/files/{filename}?download=1"
     print(f"Downloading {filename} from Zenodo ...", flush=True)
-    urllib.request.urlretrieve(url, path)
-    got = _md5(path)
-    if got != expected:
-        raise ValueError(
-            f"MD5 mismatch for {filename}: expected {expected}, got {got}"
-        )
+    # Download to a temporary file and only move it into place once the checksum
+    # verifies, so an interrupted download can't leave a truncated file masquerading
+    # as the real one at `path`.
+    tmp = path + ".part"
+    try:
+        urllib.request.urlretrieve(url, tmp)
+        got = _md5(tmp)
+        if got != expected:
+            raise ValueError(
+                f"MD5 mismatch for {filename}: expected {expected}, got {got}"
+            )
+        os.replace(tmp, path)
+    finally:
+        if os.path.exists(tmp):
+            os.remove(tmp)
     return path
 
 

@@ -13,5 +13,6 @@ dependencies:
   - pytest
   - sphinx
   - nbsphinx
+  - pandoc
   - ipykernel
   - pip

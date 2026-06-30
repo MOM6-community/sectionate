@@ -390,15 +390,22 @@ def convergent_transport(
     grid: xgcm.Grid
         Grid object describing ocean model grid and containing data variables. Must include variables "utr" and "vtr" (see kwargs).
     i_c: int
-        Vorticity point indices along "X" dimension. 
+        Vorticity point indices along "X" dimension.
     j_c: int
         Vorticity point indices along "Y" dimension.
+    f_c: array-like or None
+        Vorticity point face (tile) indices, required on multi-tile grids (those with
+        `face_connections`) and returned by `grid_section` for them; leave as None for
+        single-tile grids.
     utr: str
         Name of "X"-direction tracer transport
     vtr: str
         Name of "Y"-direction tracer transport
     layer : str or None
+        Name of the vertical layer (cell-center) coordinate, or None for grids without one.
     interface : str or None
+        Name of the vertical interface coordinate, or None. If both are given, they must be
+        consistent (`layer` is `interface` with "l" in place of "i").
     outname : str
         Name of output xr.DataArray variable. Default: "conv_mass_transport".
     sect_coord: str
