@@ -102,3 +102,10 @@ venv.bak/
 
 # mypy
 .mypy_cache/
+
+# Local example data cache (fetched from Zenodo / PO.DAAC at runtime)
+data/*.nc
+
+# Build artifacts and OS cruft
+*.tar.gz
+.DS_Store
