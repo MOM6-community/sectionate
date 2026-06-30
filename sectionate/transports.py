@@ -22,7 +22,7 @@ def _edge_direction(A, neighbor_maps):
 
 
 # velocity (var, index-offset) for the section edge leaving corner (i,j) in each
-# local direction, on a *symmetric* C-grid. V (vmo) lives at (X-center, Y-corner);
+# local direction, on an 'outer' C-grid. V (vmo) lives at (X-center, Y-corner);
 # U (umo) at (X-corner, Y-center).
 _EDGE_VEL = {
     "right": ("V", 0, 0),   # vmo at (center i,   corner j)
@@ -89,9 +89,9 @@ def _uv_for_edge(A, B, neighbor_maps, offset, ranges, glon, glat):
     The velocity index is read in a single face's frame, so no velocity is rotated across the
     seam: the SOURCE face when the edge's normal velocity lives there (the usual case, and where
     a rotated connection needs no rotation since the edge is a normal X/Y edge on that face);
-    otherwise the DESTINATION face (e.g. the trailing edge of a non-symmetric crossing);
-    otherwise the edge is degenerate (a crossing through a shared boundary corner of a symmetric
-    tiling). The sign is always geographic, so rotated seams orient correctly.
+    otherwise the DESTINATION face (e.g. the trailing edge of a crossing whose normal velocity
+    lives there); otherwise the edge is degenerate (a crossing through a shared boundary corner
+    of an 'outer' tiling). The sign is always geographic, so rotated seams orient correctly.
     """
     fA, jA, iA = A
     fB, jB, iB = B
@@ -118,9 +118,8 @@ def _uv_for_edge(A, B, neighbor_maps, offset, ranges, glon, glat):
 def uvindices_from_qindices(grid, i_c, j_c, f_c=None):
     """
     Find the `grid` indices of the N-1 velocity points defined by the consecutive indices of
-    N vorticity points. Follows MOM6 conventions (https://mom6.readthedocs.io/en/main/api/generated/pages/Horizontal_Indexing.html),
-    automatically reading the vorticity corner position from `grid` metadata ('outer'/symmetric,
-    'right'/non-symmetric, or 'left'/MITgcm-ECCO; see `gridutils.corner_offset`).
+    N vorticity points, automatically reading the vorticity corner position from `grid`
+    metadata ('outer', 'right', or 'left'; see `gridutils.corner_offset`).
 
     PARAMETERS:
     -----------
@@ -383,7 +382,7 @@ def convergent_transport(
     """
     Lazily calculates extensive transports normal to a section, with the sign convention of positive into the spherical polygon
     defined by the section, unless overridden by changing the "positive_in=True" keyword argument. Supports curvlinear geometries
-    and complicated grid topologies, as long as the grid is *locally* orthogonal (as in MOM6).
+    and complicated grid topologies, as long as the grid is *locally* orthogonal.
     Lazily broadcasts the calculation in all dimensions except ("X", "Y").
 
     PARAMETERS:

@@ -10,7 +10,7 @@ import xgcm
 import pytest
 
 from sectionate.gridutils import (
-    corner_position, corner_offset, check_symmetric, coord_dict, get_geo_corners,
+    corner_position, corner_offset, check_outer, coord_dict, get_geo_corners,
 )
 from sectionate.section import grid_section
 from sectionate.transports import convergent_transport
@@ -122,16 +122,16 @@ def test_corner_helpers_all_three_positions():
     assert corner_position(left) == "left"
     assert corner_offset(outer) == 0
     assert corner_offset(left) == 0
-    # check_symmetric no longer raises on 'left'; it just reports non-symmetric.
-    assert check_symmetric(outer) is True
-    assert check_symmetric(left) is False
+    # check_outer no longer raises on 'left'; it just reports False.
+    assert check_outer(outer) is True
+    assert check_outer(left) is False
     # coord_dict / get_geo_corners now succeed on 'left'.
     assert coord_dict(left)["X"]["corner"] == "xq"
     assert get_geo_corners(left)["X"].shape == left._ds.geolon_c.shape
 
 
 def test_right_corner_offset():
-    # A minimal 'right' (non-symmetric) grid still reports offset 1.
+    # A minimal 'right' grid still reports offset 1.
     N = 4
     ds = xr.Dataset(coords={
         "xq": (("xq",), np.arange(N)), "yq": (("yq",), np.arange(N)),
@@ -144,7 +144,7 @@ def test_right_corner_offset():
                      boundary="extend", autoparse_metadata=False)
     assert corner_position(grid) == "right"
     assert corner_offset(grid) == 1
-    assert check_symmetric(grid) is False
+    assert check_outer(grid) is False
 
 
 # ---------------------------------------------------------------------------

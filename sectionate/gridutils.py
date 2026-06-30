@@ -22,7 +22,7 @@ def get_facedim(grid):
 def corner_position(grid):
     """
     Return the C-grid vorticity ("corner") position shared by the X and Y axes:
-    "outer" (symmetric), "right" (non-symmetric), or "left" (MITgcm/ECCO).
+    "outer", "right", or "left".
 
     Parameters
     ----------
@@ -37,19 +37,17 @@ def corner_position(grid):
         if (pos in grid.axes["X"].coords) and (pos in grid.axes["Y"].coords):
             return pos
     raise ValueError(
-        "Only C-grids with vorticity coordinates at a shared 'outer' (symmetric), "
-        "'right' (non-symmetric), or 'left' (MITgcm/ECCO) position on both the X and "
-        "Y axes are supported."
+        "Only C-grids with vorticity coordinates at a shared 'outer', 'right', or "
+        "'left' position on both the X and Y axes are supported."
     )
 
 
 def corner_offset(grid):
     """
     Integer index shift from a vorticity ("corner") point to its staggered velocity
-    point, by corner position (see `corner_position`). Symmetric ('outer') grids are
-    the baseline (0); non-symmetric ('right') grids shift by +1; 'left'-staggered
-    (MITgcm/ECCO) grids index like 'outer' (0), differing only in array length and
-    in which boundary row/column is absent.
+    point, by corner position (see `corner_position`). 'outer' grids are the baseline
+    (0); 'right' grids shift by +1; 'left' grids index like 'outer' (0), differing
+    only in array length and in which boundary row/column is absent.
 
     Parameters
     ----------
@@ -125,12 +123,12 @@ def coord_dict(grid):
             "corner": grid.axes["Y"].coords[corner_pos]},
     }
     
-def check_symmetric(grid):
+def check_outer(grid):
     """
-    Check whether the horizontal ocean model grid is symmetric, according to MOM6 conventions.
-    Symmetric C-grids have tracers on (M,N) 'center' positions and vorticity on (M+1, N+1)
-    'outer' positions. Non-symmetric ('right') and MITgcm/ECCO ('left') grids have vorticity
-    on (M,N) positions; both return False here. See `corner_position` for the general case.
+    Check whether the grid's shared vorticity ("corner") position is 'outer'.
+    'outer' C-grids have tracers on (M,N) 'center' positions and vorticity on
+    (M+1, N+1) 'outer' positions. 'right' and 'left' grids have vorticity on (M,N)
+    positions; both return False here. See `corner_position` for the general case.
 
     Parameters
     ----------
@@ -139,8 +137,8 @@ def check_symmetric(grid):
 
     Returns
     -------
-    symmetric : bool
-        True if symmetric ('outer'); False otherwise ('right' or 'left').
+    bool
+        True if the corner position is 'outer'; False otherwise ('right' or 'left').
     """
     return corner_position(grid) == "outer"
 
@@ -259,8 +257,8 @@ def build_neighbor_maps(grid, geocorners):
     # On staggered ('left'/'right') corner lattices the corner sits half a cell
     # from the centers a `face_connections` seam is defined on, so padding the
     # corner-index arrays across a rotated/reversed seam can land one corner off.
-    # This is invisible on symmetric ('outer') grids (the seam corner is shared)
-    # but systematic on lat-lon-cap/MITgcm ('left') grids. See `_correct_seam_neighbors`.
+    # This is invisible on 'outer' grids (the seam corner is shared) but systematic
+    # on 'left'/'right' staggered grids. See `_correct_seam_neighbors`.
     if multitile:
         maps = _correct_seam_neighbors(grid, maps, own_f, own_j, own_i)
 
@@ -285,13 +283,13 @@ def _correct_seam_neighbors(grid, maps, own_f, own_j, own_i):
     index every corner by each of its four edges (the unordered pair of cells on
     either side), then for any neighbor that is *not* edge-adjacent to its corner,
     substitute the corner that genuinely shares that edge. Edge-adjacent neighbors
-    -- all interior corners, and every corner of a symmetric 'outer' grid -- and
-    walls (a corner mapped to itself) are left untouched, so this only ever
-    replaces a wrong seam neighbor with the right one.
+    -- all interior corners, and every corner of an 'outer' grid -- and walls (a
+    corner mapped to itself) are left untouched, so this only ever replaces a wrong
+    seam neighbor with the right one.
 
-    Symmetric ('outer') grids are exempt -- their seam vorticity points are shared
-    across tiles, so xgcm's corner padding already aligns and there is nothing to
-    correct (they also need not carry tracer-center coordinates).
+    'outer' grids are exempt -- their seam vorticity points are shared across tiles,
+    so xgcm's corner padding already aligns and there is nothing to correct (they
+    also need not carry tracer-center coordinates).
     """
     if corner_position(grid) == "outer":
         return maps
