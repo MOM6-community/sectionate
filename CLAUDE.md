@@ -19,8 +19,10 @@ pip install -e .
 test suite, executing the example notebooks, and any package work in this workspace.
 Keep it updated as needed; in particular it must carry the unreleased **fold-aware
 xgcm** (`hdrake/xgcm@tripolar-north-fold`, which includes the bipolar fold #711 and the
-face-connection padding fix #713) plus example/notebook deps (e.g. `earthaccess` for the
-ECCO examples). Install with `pip install "git+https://github.com/hdrake/xgcm.git@tripolar-north-fold"`.
+face-connection padding fix #713). The ECCO example (notebook 5) pulls its data subset
+from Zenodo (concept DOI `10.5281/zenodo.21051424`) via stdlib `urllib` with MD5 checks —
+no `earthaccess`/Earthdata login needed. Install xgcm with
+`pip install "git+https://github.com/hdrake/xgcm.git@tripolar-north-fold"`.
 Caveat: that dev build reports version `0.1.devNNN`, which is `< 0.9.0`, so re-running
 `pip install -e .` (sectionate requires `xgcm>=0.9.0`) silently reinstalls a released xgcm
 over it; reinstall the fold-aware xgcm afterwards with `--no-deps`. A correctly set up env
