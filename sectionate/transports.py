@@ -692,10 +692,16 @@ def is_mask_inside(mask, grid, sect, idx=0):
     coords = coord_dict(grid)
     facedim = get_facedim(grid)
     fsel = {facedim: int(sect["face"][idx])} if (facedim is not None and "face" in sect) else {}
+    # Pick the neighbouring tracer cell on the side the stored velocity's positive direction
+    # points to, using the geometric `Lsign` (+1 if that direction is left of travel) rather
+    # than the face-frame `Usign`/`Vsign`. On single-tile 'outer'/'right' grids `Lsign` equals
+    # `Usign`/`Vsign` for the relevant face, so this is unchanged there; on 'left' (MITgcm/ECCO)
+    # and rotated multi-tile seams it carries the correct staggering/topology, where the
+    # face-frame signs would select the wrong side and invert `positive_in`.
     if sect["var"][idx]=="U":
         i = (
             sect["i"][idx]
-            - (1 if sect["Usign"][idx].values==-1. else 0)
+            - (1 if sect["Lsign"][idx].values==-1. else 0)
             + offset
         )
         j = sect["j"][idx]
@@ -721,7 +727,7 @@ def is_mask_inside(mask, grid, sect, idx=0):
         i = sect["i"][idx]
         j = (
             sect["j"][idx]
-            - (1 if sect["Vsign"][idx].values==-1. else 0)
+            - (1 if sect["Lsign"][idx].values==-1. else 0)
             + offset
         )
         if 0<=j<=grid._ds[coords["Y"]["center"]].size-1:

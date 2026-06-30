@@ -172,6 +172,45 @@ def test_left_transport_matches_outer():
     assert np.isclose(conv_o, conv_l, rtol=1e-12)
 
 
+def test_left_multitile_mask_orientation():
+    """`positive_in=mask` must resolve the inward sense on a 'left' + multi-tile grid.
+
+    `is_mask_inside` previously located the "inside" tracer cell with the face-frame
+    `Usign`/`Vsign`. On a multi-tile grid those diverge from the geometric `Lsign` (which
+    carries the topology), so the mask path selected the wrong-side cell and inverted the
+    sign of the returned transport -- exactly the failure on the native ECCO LLC grid.
+    It now uses `Lsign`. (Single-tile grids are unaffected: there `Lsign` equals the
+    face-frame sign by construction.) The geometric `positive_in=True` result and the
+    uncut single-tile `positive_in=mask` result are the oracle the split grid must match."""
+    single, split = _matched_single_and_split_left()
+    lonseg = np.array([10., 60., 60., 10., 10.])
+    latseg = np.array([-15., -15., 15., 15., -15.])
+
+    def box_mask(grid):  # center cells enclosed by the box
+        lon, lat = grid._ds["geolon"], grid._ds["geolat"]
+        return (lon >= 10.) & (lon <= 60.) & (lat >= -15.) & (lat <= 15.)
+
+    i, j, *_ = grid_section(single, lonseg, latseg)
+    geom = convergent_transport(
+        single, i, j, utr="u", vtr="v", layer=None, geometry="cartesian",
+    )["conv_mass_transport"].sum().values
+    assert np.abs(geom) > 1e-6               # non-trivial: the sign actually matters
+    conv_single = convergent_transport(
+        single, i, j, utr="u", vtr="v", layer=None, geometry="cartesian",
+        positive_in=box_mask(single),
+    )["conv_mass_transport"].sum().values
+
+    i2, j2, f2, *_ = grid_section(split, lonseg, latseg)
+    assert set(np.unique(f2).tolist()) == {0, 1}   # genuinely crosses the seam
+    conv_split = convergent_transport(
+        split, i2, j2, f2, utr="u", vtr="v", layer=None, geometry="cartesian",
+        positive_in=box_mask(split),
+    )["conv_mass_transport"].sum().values
+
+    assert np.isclose(conv_single, geom, rtol=1e-12)
+    assert np.isclose(conv_split, geom, rtol=1e-12)
+
+
 def test_left_multitile_seam_transport_matches_uncut_grid():
     """The native LLC case: 'left' staggering + multi-tile face_connections."""
     single, split = _matched_single_and_split_left()
