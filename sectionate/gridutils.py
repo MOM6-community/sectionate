@@ -192,12 +192,14 @@ def build_neighbor_maps(grid, geocorners):
     Works for both single-tile grids (corner arrays with dims (Y, X); the returned
     `fmap` is None) and multi-tile grids (dims (face, Y, X)).
 
-    Multi-tile grids with staggered ('left'/'right') corners do not go through
-    xgcm's halo padding at all: their corner lattice is incomplete per face and
-    padding it can land one corner off across rotated/reversed seams. Their maps
-    are instead derived from the grid's outer (shared-corner) lattice, resolved
-    to native indices -- see `_OuterTopology`. The returned maps have the same
-    format and native index frame either way.
+    Multi-tile grids do not go through xgcm's halo padding at all: on staggered
+    ('left'/'right') corner lattices padding can land one corner off across
+    rotated/reversed seams, and on shared-corner ('outer') tilings it produces
+    seam-twin duplicates. Their maps are instead derived from the grid's outer
+    (shared-corner) corner topology, resolved to native indices -- see
+    `_OuterTopology`. Each physical corner appears under a single canonical
+    native index (a shared 'outer' seam corner is not stepped through twice),
+    and the returned maps have the same format and native index frame.
 
     Parameters
     ----------
@@ -218,31 +220,31 @@ def build_neighbor_maps(grid, geocorners):
     facedim = getattr(grid, "_facedim", None)
     multitile = facedim is not None
 
-    if multitile and corner_position(grid) != "outer":
-        return outer_topology(grid).maps
+    if multitile:
+        has_centers = all("center" in grid.axes[ax].coords for ax in ("X", "Y"))
+        if has_centers:
+            return outer_topology(grid).maps
+        # Without tracer-center coordinates the cell-identity construction is
+        # unavailable (and neither are velocities, so only walking is needed):
+        # fall back to reading xgcm's corner halos directly. Only shared-corner
+        # ('outer') tilings are safe here -- staggered corner arrays can pad one
+        # corner off across rotated/reversed seams.
+        if corner_position(grid) != "outer":
+            raise ValueError(
+                "Multi-tile grids with staggered ('left'/'right') corners require "
+                "tracer-center coordinates to derive their corner topology."
+            )
+        return _multitile_padded_maps(grid, geocorners)
     da = geocorners["X"]
     Ydim, Xdim = da.dims[-2], da.dims[-1]
     ny, nx = da.sizes[Ydim], da.sizes[Xdim]
 
-    if multitile:
-        nf = da.sizes[facedim]
-        dims = (facedim, Ydim, Xdim)
-        shape = (nf, ny, nx)
-        iarr = xr.DataArray(np.broadcast_to(np.arange(nx), shape).astype(float), dims=dims)
-        jarr = xr.DataArray(np.broadcast_to(np.arange(ny)[:, None], shape).astype(float), dims=dims)
-        farr = xr.DataArray(np.broadcast_to(np.arange(nf)[:, None, None], shape).astype(float), dims=dims)
-        own_f = np.broadcast_to(np.arange(nf)[:, None, None], shape)
-        own_j = np.broadcast_to(np.arange(ny)[:, None], shape)
-        own_i = np.broadcast_to(np.arange(nx), shape)
-    else:
-        dims = (Ydim, Xdim)
-        shape = (ny, nx)
-        iarr = xr.DataArray(np.broadcast_to(np.arange(nx), shape).astype(float), dims=dims)
-        jarr = xr.DataArray(np.broadcast_to(np.arange(ny)[:, None], shape).astype(float), dims=dims)
-        farr = None
-        own_f = None
-        own_j = np.broadcast_to(np.arange(ny)[:, None], shape)
-        own_i = np.broadcast_to(np.arange(nx), shape)
+    dims = (Ydim, Xdim)
+    shape = (ny, nx)
+    iarr = xr.DataArray(np.broadcast_to(np.arange(nx), shape).astype(float), dims=dims)
+    jarr = xr.DataArray(np.broadcast_to(np.arange(ny)[:, None], shape).astype(float), dims=dims)
+    own_j = np.broadcast_to(np.arange(ny)[:, None], shape)
+    own_i = np.broadcast_to(np.arange(nx), shape)
 
     boundary = {ax: grid.axes[ax].boundary for ax in grid.axes}
     boundary_width = {ax: (1, 1) for ax in grid.axes}
@@ -251,7 +253,6 @@ def build_neighbor_maps(grid, geocorners):
         return _module_pad(a, grid, boundary_width, boundary=boundary, fill_value=np.nan)
 
     pj, pi = pad(jarr), pad(iarr)
-    pf = pad(farr) if multitile else None
 
     interior = slice(1, -1)
     slices = {
@@ -268,25 +269,94 @@ def build_neighbor_maps(grid, geocorners):
         imap = pi.isel(sel).values
         # A NaN halo means "no neighbor" (an unconnected/fill edge) -- represent
         # the wall as the point itself, matching the clip-to-edge behavior.
-        if multitile:
-            fmap = pf.isel(sel).values
-            wall = np.isnan(fmap) | np.isnan(jmap) | np.isnan(imap)
-            fmap = np.where(wall, own_f, fmap).astype(np.int64)
-        else:
-            wall = np.isnan(jmap) | np.isnan(imap)
-            fmap = None
+        wall = np.isnan(jmap) | np.isnan(imap)
+        jmap = np.where(wall, own_j, jmap).astype(np.int64)
+        imap = np.where(wall, own_i, imap).astype(np.int64)
+        maps[d] = (None, jmap, imap)
+
+    return maps
+
+
+def _multitile_padded_maps(grid, geocorners):
+    """
+    Fallback multi-tile neighbor maps for shared-corner ('outer') tilings that
+    carry no tracer-center coordinates: pad index-valued corner arrays with
+    xgcm's `face_connections` halos and read the neighbors off directly. A
+    shared seam corner is stored on every face that touches it, so these maps
+    step through each face's own copy (seam-twin semantics); `_validate_reciprocity`
+    refuses topologies xgcm's padding cannot represent consistently.
+    """
+    facedim = grid._facedim
+    da = geocorners["X"]
+    Ydim, Xdim = da.dims[-2], da.dims[-1]
+    ny, nx = da.sizes[Ydim], da.sizes[Xdim]
+    nf = da.sizes[facedim]
+    dims = (facedim, Ydim, Xdim)
+    shape = (nf, ny, nx)
+    iarr = xr.DataArray(np.broadcast_to(np.arange(nx), shape).astype(float), dims=dims)
+    jarr = xr.DataArray(np.broadcast_to(np.arange(ny)[:, None], shape).astype(float), dims=dims)
+    farr = xr.DataArray(np.broadcast_to(np.arange(nf)[:, None, None], shape).astype(float), dims=dims)
+    own_f = np.broadcast_to(np.arange(nf)[:, None, None], shape)
+    own_j = np.broadcast_to(np.arange(ny)[:, None], shape)
+    own_i = np.broadcast_to(np.arange(nx), shape)
+
+    boundary = {ax: grid.axes[ax].boundary for ax in grid.axes}
+    boundary_width = {ax: (1, 1) for ax in grid.axes}
+
+    def pad(a):
+        return _module_pad(a, grid, boundary_width, boundary=boundary, fill_value=np.nan)
+
+    pj, pi, pf = pad(jarr), pad(iarr), pad(farr)
+
+    interior = slice(1, -1)
+    slices = {
+        "right": (interior, slice(2, None)),
+        "left":  (interior, slice(0, -2)),
+        "up":    (slice(2, None), interior),
+        "down":  (slice(0, -2), interior),
+    }
+
+    maps = {}
+    for d, (ysl, xsl) in slices.items():
+        sel = {Ydim: ysl, Xdim: xsl}
+        jmap = pj.isel(sel).values
+        imap = pi.isel(sel).values
+        fmap = pf.isel(sel).values
+        wall = np.isnan(fmap) | np.isnan(jmap) | np.isnan(imap)
+        fmap = np.where(wall, own_f, fmap).astype(np.int64)
         jmap = np.where(wall, own_j, jmap).astype(np.int64)
         imap = np.where(wall, own_i, imap).astype(np.int64)
         maps[d] = (fmap, jmap, imap)
 
-    # Validate that multi-tile `face_connections` produced a self-consistent
-    # neighbor map. Single-tile padding (periodic, fill/extend, bipolar fold) is
-    # well-tested upstream, and the fold deliberately identifies seam corners
-    # (i <-> mirror(i)) in a way that is not index-reciprocal, so we only validate
-    # multi-tile maps.
-    if multitile:
-        _validate_reciprocity(maps, own_f, own_j, own_i)
+    _validate_reciprocity(maps, own_f, own_j, own_i)
     return maps
+
+
+def _validate_reciprocity(maps, own_f, own_j, own_i):
+    """
+    Verify that the neighbor maps describe a consistent topology: if B is a
+    (non-wall) neighbor of A, then A must be one of B's four neighbors. An
+    inconsistent map would yield silently-wrong sections, so we detect it and
+    refuse rather than return garbage neighbors.
+    """
+    for d, (fmap, jmap, imap) in maps.items():
+        same = (fmap == own_f) & (jmap == own_j) & (imap == own_i)
+        not_wall = ~same
+        # Gather each neighbor's own four neighbors and look for the point back.
+        reciprocated = np.zeros(jmap.shape, dtype=bool)
+        for (f2, j2, i2) in maps.values():
+            back = (
+                (f2[fmap, jmap, imap] == own_f)
+                & (j2[fmap, jmap, imap] == own_j)
+                & (i2[fmap, jmap, imap] == own_i)
+            )
+            reciprocated |= back
+        if np.any(not_wall & ~reciprocated):
+            raise NotImplementedError(
+                "Could not derive a consistent neighbor topology from this grid's "
+                "`face_connections` metadata (the multi-tile neighbor maps are not "
+                "reciprocal). Sections on grids with simpler topology are supported."
+            )
 
 
 def outer_topology(grid):
@@ -597,11 +667,14 @@ class _OuterTopology:
                     else:
                         by_loc[lk] = a
                     # Two distinct corners can share at most two cells, so slots
-                    # sharing three (their full usable set) are the same physical
-                    # point. This is what unifies the representations of a
-                    # 3-valent cube vertex that is stored on *no* face (each
-                    # face's view drops only its own unreliable diagonal cell).
-                    if usable4[f, J, I].sum() == 3:
+                    # sharing three or four (their full usable set) are the same
+                    # physical point. Four-cell keys unify the twin storage of
+                    # shared-corner ('outer') tilings' seam corners; three-cell
+                    # keys unify the representations of a 3-valent cube vertex
+                    # stored on *no* face (each face's view drops only its own
+                    # unreliable diagonal cell).
+                    nu = usable4[f, J, I].sum()
+                    if nu >= 3:
                         ck = frozenset(
                             int(c) for c, u in zip(cells4[f, J, I], usable4[f, J, I]) if u
                         )
@@ -716,6 +789,15 @@ class _OuterTopology:
         self.node_native = node_native
         self.node_adj = adj
         self._edge_cells = edge_cells
+        self._Nyc, self._Nxc = Nyc, Nxc
+        node_reps = [[] for _ in range(n_nodes)]
+        for f in range(nf):
+            for J in range(nqy):
+                for I in range(nqx):
+                    n = node_id[f, J, I]
+                    if n >= 0:
+                        node_reps[n].append((f, J, I))
+        self.node_reps = node_reps
 
         # No `_validate_reciprocity` here: the maps project an *undirected* node
         # graph, so node-level reciprocity holds by construction. Index-level
@@ -725,6 +807,126 @@ class _OuterTopology:
         # node's single canonical native rep, so the other twins receive no
         # back-links -- the walker only ever visits canonical reps.
         self.maps = self._native_maps()
+
+    def _edge_native_velocities(self, nA, nB):
+        """
+        All native storages of the velocity face between corner nodes `nA` and
+        `nB`. Each entry is ``(var, f, j, i, to_cell, from_cell)``: the native
+        velocity index, plus the global tracer-cell ids its positive direction
+        points to and from in its own face's frame (either may be None at a
+        face edge). A seam velocity is stored once (on the face whose low edge
+        it is); a boundary-fold edge may be stored twice.
+        """
+        t, Nyc, Nxc = self.t, self._Nyc, self._Nxc
+        out = []
+        reps_B = {}
+        for (f, J, I) in self.node_reps[nB]:
+            reps_B.setdefault(f, []).append((J, I))
+        for (f, Ja, Ia) in self.node_reps[nA]:
+            for (Jb, Ib) in reps_B.get(f, ()):
+                if abs(Ja - Jb) + abs(Ia - Ib) != 1:
+                    continue
+
+                def gid(jc, ic):
+                    if 0 <= jc < Nyc and 0 <= ic < Nxc:
+                        return (f * Nyc + jc) * Nxc + ic
+                    return None
+
+                if Ia == Ib:  # vertical outer edge: a U (X-direction) velocity
+                    jc, I = min(Ja, Jb), Ia
+                    i = I - t
+                    if 0 <= i < self.nxq and 0 <= jc < Nyc:
+                        out.append(("U", f, jc, i, gid(jc, I), gid(jc, I - 1)))
+                else:         # horizontal outer edge: a V (Y-direction) velocity
+                    J, ic = Ja, min(Ia, Ib)
+                    j = J - t
+                    if 0 <= j < self.nyq and 0 <= ic < Nxc:
+                        out.append(("V", f, j, ic, gid(J, ic), gid(J - 1, ic)))
+        return out
+
+    def padded_transports(self, u, v):
+        """
+        Extend native staggered transports to the full outer lattice, reading
+        each missing edge slot's value from the native storage of that physical
+        edge (with the sign of the receiving face's own axis direction).
+
+        This is the topology-exact analogue of
+        ``xgcm.pad(..., other_component=...)``: instead of index-shifting a
+        halo (which can pick the wrong component or slice across a rotated
+        seam), every added slot is resolved through the corner-node graph to
+        the *stored* velocity of the same physical face. Edges stored on no
+        face (open walls, grid cuts) are zero -- a wall carries no transport.
+
+        Parameters
+        ----------
+        u, v : xr.DataArray or np.ndarray
+            Native X- and Y-direction transports, dims ([face,] Y, X) with X/Y
+            at (corner, center) for `u` and (center, corner) for `v`.
+
+        Returns
+        -------
+        Uo, Vo : np.ndarray
+            Outer-lattice transports, shapes (nf, Nyc, Nxc+1) and
+            (nf, Nyc+1, Nxc). The convergence into cell (f, j, i) is
+            ``Uo[f,j,i] - Uo[f,j,i+1] + Vo[f,j,i] - Vo[f,j+1,i]``, exactly
+            consistent with boundary fluxes read from the same native arrays.
+        """
+        t, nf, Nyc, Nxc = self.t, self.nf, self._Nyc, self._Nxc
+        U = np.asarray(getattr(u, "values", u), dtype=float)
+        V = np.asarray(getattr(v, "values", v), dtype=float)
+        U = np.nan_to_num(U)
+        V = np.nan_to_num(V)
+
+        C = self._C
+
+        def cellgid(f, jc, ic):
+            return (f * Nyc + jc) * Nxc + ic
+
+        def twin_value(nA, nB, to_gid, from_gid):
+            """Stored value of the edge between nodes nA/nB, signed so that its
+            positive direction points from cell `from_gid` to cell `to_gid`
+            (the receiving face's own axis direction). Either may be None."""
+            if nA < 0 or nB < 0:
+                return 0.0
+            for var, f2, j2, i2, to2, from2 in self._edge_native_velocities(nA, nB):
+                val = U[f2, j2, i2] if var == "U" else V[f2, j2, i2]
+                if (to2 is not None and to2 == to_gid) or (from2 is not None and from2 == from_gid):
+                    return val
+                if (to2 is not None and to2 == from_gid) or (from2 is not None and from2 == to_gid):
+                    return -val
+            return 0.0
+
+        def halo(f, jp, ip):
+            g = C[f, jp, ip]
+            return None if np.isnan(g) else int(g)
+
+        Uo = np.zeros((nf, Nyc, Nxc + 1))
+        Uo[:, :, t:t + self.nxq] = U
+        Vo = np.zeros((nf, Nyc + 1, Nxc))
+        Vo[:, t:t + self.nyq, :] = V
+
+        for f in range(nf):
+            for I in (I for I in (0, Nxc) if not (t <= I < t + self.nxq)):
+                icell = I if I == 0 else I - 1  # the face's own cell beside the slot
+                for jc in range(Nyc):
+                    nA = self.node_id[f, jc, I]
+                    nB = self.node_id[f, jc + 1, I]
+                    own = cellgid(f, jc, icell)
+                    hal = halo(f, jc + 1, I if I == 0 else I + 1)
+                    # positive Uo direction is f's +x: at the high edge it points
+                    # from the in-face cell to the halo, at the low edge reverse.
+                    to_gid, from_gid = (own, hal) if I == 0 else (hal, own)
+                    Uo[f, jc, I] = twin_value(nA, nB, to_gid, from_gid)
+            for J in (J for J in (0, Nyc) if not (t <= J < t + self.nyq)):
+                jcell = J if J == 0 else J - 1
+                for ic in range(Nxc):
+                    nA = self.node_id[f, J, ic]
+                    nB = self.node_id[f, J, ic + 1]
+                    own = cellgid(f, jcell, ic)
+                    hal = halo(f, J if J == 0 else J + 1, ic + 1)
+                    to_gid, from_gid = (own, hal) if J == 0 else (hal, own)
+                    Vo[f, J, ic] = twin_value(nA, nB, to_gid, from_gid)
+        return Uo, Vo
 
     def _native_maps(self):
         """Project the node graph onto native-frame neighbor maps (the
@@ -809,38 +1011,3 @@ class _OuterTopology:
                         if nat[0] >= 0:
                             assign(d, f, j, i, nat)
         return maps
-
-
-def _validate_reciprocity(maps, own_f, own_j, own_i):
-    """
-    Verify that the neighbor maps describe a consistent topology: if B is a
-    (non-wall) neighbor of A, then A must be one of B's four neighbors. An
-    inconsistent map would yield silently-wrong sections, so we detect it and
-    refuse rather than return garbage neighbors. Handles both single-tile
-    (`own_f is None`, 2-D index maps) and multi-tile (3-D) maps.
-    """
-    multitile = own_f is not None
-
-    def gather(arr, fmap, jmap, imap):
-        return arr[fmap, jmap, imap] if multitile else arr[jmap, imap]
-
-    for d, (fmap, jmap, imap) in maps.items():
-        same = (jmap == own_j) & (imap == own_i)
-        if multitile:
-            same &= (fmap == own_f)
-        not_wall = ~same
-        # Gather each neighbor's own four neighbors and look for the point back.
-        reciprocated = np.zeros(jmap.shape, dtype=bool)
-        for (f2, j2, i2) in maps.values():
-            bj = gather(j2, fmap, jmap, imap)
-            bi = gather(i2, fmap, jmap, imap)
-            back = (bj == own_j) & (bi == own_i)
-            if multitile:
-                back &= (gather(f2, fmap, jmap, imap) == own_f)
-            reciprocated |= back
-        if np.any(not_wall & ~reciprocated):
-            raise NotImplementedError(
-                "Could not derive a consistent neighbor topology from this grid's "
-                "`face_connections` metadata (the multi-tile neighbor maps are not "
-                "reciprocal). Sections on grids with simpler topology are supported."
-            )

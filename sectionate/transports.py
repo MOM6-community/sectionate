@@ -5,7 +5,7 @@ import dask
 
 from .gridutils import (
     corner_offset, coord_dict, get_geo_corners, get_facedim, build_neighbor_maps,
-    NEIGHBOR_DIRECTIONS,
+    outer_topology, NEIGHBOR_DIRECTIONS,
 )
 from .section import distance_on_unit_sphere, COINCIDENT_TOLERANCE_M
 
@@ -150,6 +150,28 @@ def uvindices_from_qindices(grid, i_c, j_c, f_c=None):
     """
     i_c = np.asarray(i_c)
     j_c = np.asarray(j_c)
+    offset = corner_offset(grid)
+    geocorners = get_geo_corners(grid)
+    glon = np.asarray(geocorners["X"].values)
+    glat = np.asarray(geocorners["Y"].values)
+
+    if f_c is not None:
+        # Resolve each corner to its canonical native representation on the
+        # grid's corner topology, dropping consecutive corners that are the
+        # same physical point. Sections saved before multi-tile paths became
+        # twin-free step through both native copies of a shared seam corner:
+        # that zero-length edge is not a velocity face, and the neighbor maps
+        # used below link only canonical representations.
+        ot = outer_topology(grid)
+        f_c = np.asarray(f_c)
+        nodes = ot.node_id[f_c, j_c + ot.t, i_c + ot.t]
+        if (nodes < 0).any():
+            raise ValueError("Section contains indices that are not grid corners.")
+        keep = np.ones(nodes.size, dtype=bool)
+        keep[1:] = nodes[1:] != nodes[:-1]
+        nat = ot.node_native[nodes[keep]]
+        f_c, j_c, i_c = nat[:, 0].copy(), nat[:, 1].copy(), nat[:, 2].copy()
+
     nsec = i_c.size
     uvindices = {
         "var":np.zeros(nsec-1, dtype="<U2"),
@@ -158,10 +180,6 @@ def uvindices_from_qindices(grid, i_c, j_c, f_c=None):
         "Yinc":np.zeros(nsec-1, dtype=bool),
         "Xinc":np.zeros(nsec-1, dtype=bool)
     }
-    offset = corner_offset(grid)
-    geocorners = get_geo_corners(grid)
-    glon = np.asarray(geocorners["X"].values)
-    glat = np.asarray(geocorners["Y"].values)
 
     if f_c is not None:
         f_c = np.asarray(f_c)
