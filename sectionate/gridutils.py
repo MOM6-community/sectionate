@@ -775,11 +775,28 @@ class _OuterTopology:
                                     cs.add(int(C[f, jp, ip]))
         bad = [n for n in range(n_nodes) if len(adj[n]) > 4]
         if bad:
+            fc = grid._face_connections[facedim]
+            has_reverse = any(
+                conn is not None and conn[2]
+                for face in fc.values() for sides in face.values() for conn in sides
+            )
+            if pos != "outer" and has_reverse:
+                raise NotImplementedError(
+                    f"This grid is non-symmetric ('{pos}' staggering) and its "
+                    "`face_connections` include same-side ('reverse=True') gluings. On "
+                    "a 'left'/'right'-staggered grid a same-side seam meets along the "
+                    "dropped edge, so the shared-seam corners and their transports are "
+                    "stored on NO face -- they are simply absent from the arrays, and no "
+                    "conservative corner topology can recover missing data. Only "
+                    "opposite-side ('reverse=False') gluings, or a symmetric ('outer') "
+                    "grid that stores every seam corner and velocity face on both sides, "
+                    "carry the data such a topology needs."
+                )
             raise NotImplementedError(
                 "Could not derive a consistent corner topology from this grid's "
-                "`face_connections` metadata (a corner point acquired more than "
-                "four neighbors). Sections on grids with simpler topology are "
-                "supported."
+                "`face_connections` metadata (a corner point acquired more than four "
+                "neighbors -- e.g. a face folded onto itself, which is degenerate on "
+                "any staggering). Sections on grids with simpler topology are supported."
             )
 
         with np.errstate(invalid="ignore"):

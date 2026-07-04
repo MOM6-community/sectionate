@@ -324,20 +324,27 @@ def _cube_variant(rots, stagger="left", faces=None, fc=None):
         v = -(psi[:, :Nc, 1:] - psi[:, :Nc, :-1])
         cpos = {"X": {"center": "i", "left": "i_g"},
                 "Y": {"center": "j", "left": "j_g"}}
-    else:  # right: the stored vorticity corner is the NE corner of each cell
+    elif stagger == "right":  # the stored vorticity corner is the NE corner of each cell
         lonc, latc = lon_o[:, 1:, 1:], lat_o[:, 1:, 1:]
         u = psi[:, 1:, 1:] - psi[:, :-1, 1:]      # east face of cell (i, j)
         v = -(psi[:, 1:, 1:] - psi[:, 1:, :-1])   # north face of cell (i, j)
         cpos = {"X": {"center": "i", "right": "i_g"},
                 "Y": {"center": "j", "right": "j_g"}}
+    else:  # outer (symmetric): every corner stored, both boundary velocity faces kept
+        lonc, latc = lon_o, lat_o                 # full (Nc+1, Nc+1) corners
+        u = psi[:, 1:, :] - psi[:, :-1, :]        # (Nc, Nc+1) on (center-Y, outer-X)
+        v = -(psi[:, :, 1:] - psi[:, :, :-1])     # (Nc+1, Nc) on (outer-Y, center-X)
+        cpos = {"X": {"center": "i", "outer": "i_g"},
+                "Y": {"center": "j", "outer": "j_g"}}
 
     if fc is None:
         fc = _derive_face_connections(cxyz_all)
+    nig, njg = u.shape[2], v.shape[1]             # Nc (left/right) or Nc+1 (outer)
     ds = xr.Dataset(
         {"u": (("face", "j", "i_g"), u), "v": (("face", "j_g", "i"), v)},
         coords={
             "i": np.arange(Nc), "j": np.arange(Nc),
-            "i_g": np.arange(Nc), "j_g": np.arange(Nc), "face": np.arange(len(fs)),
+            "i_g": np.arange(nig), "j_g": np.arange(njg), "face": np.arange(len(fs)),
             "geolon": (("face", "j", "i"), lonh), "geolat": (("face", "j", "i"), lath),
             "geolon_c": (("face", "j_g", "i_g"), lonc),
             "geolat_c": (("face", "j_g", "i_g"), latc),
@@ -417,3 +424,40 @@ def test_same_side_reverse_gluing_raises():
     grid, _ = _cube_variant(same_side, stagger="left")
     with pytest.raises((NotImplementedError, ValueError)):
         outer_topology(grid)
+
+
+@pytest.mark.xfail(
+    reason="outer+reverse not yet wired: the DATA is complete (0 unstored corners, "
+    "twins coincident to round-9) and outer all-low-high works, but _OuterTopology "
+    "over-connects reverse-seam corners (degree 6-7 vs 4) -- reverse-seam twin "
+    "adjacency merging is unimplemented. Fix pending; this test auto-flips when done.",
+    strict=True,
+    raises=NotImplementedError,
+)
+def test_outer_reverse_gluing_matches_by_coincidence():
+    """On an OUTER (symmetric) grid, a same-side ('reverse=True') gluing SHOULD be a
+    non-issue: every seam corner and velocity face is stored on both faces as a
+    coincident twin (nothing dropped), so the topology should build with no unstored
+    nodes and a section crossing the reverse seams should carry transport equal to the
+    streamfunction difference of its endpoints -- exactly, including the twin sign
+    reconciliation. This is the same base-frames cube that FAILS in 'left'
+    staggering (test_same_side_reverse_gluing_raises). Currently xfails: the data is
+    complete but the reverse-seam adjacency merge is not yet implemented."""
+    grid, psi = _cube_variant((0, 0, 0, 0, 0, 0), stagger="outer")   # base frames: has reverse
+    assert corner_position(grid) == "outer"
+    fc = grid._face_connections[grid._facedim]
+    assert any(c is not None and c[2]                                # really has reverse=True
+               for face in fc.values() for s in face.values() for c in s)
+
+    ot = outer_topology(grid)                                        # builds; reverse is fine on outer
+    assert (ot.node_id >= 0).all()
+    assert np.all(ot.node_native[:, 0] >= 0)                        # every corner stored (0 unstored)
+
+    # a section crossing several faces (hence reverse seams): transport == dpsi
+    i_c, j_c, f_c, lons, lats = grid_section(grid, [10., -150.], [40., -30.])
+    assert len(set(np.asarray(f_c).tolist())) >= 3
+    conv = convergent_transport(grid, i_c, j_c, f_c, utr="u", vtr="v",
+                                layer=None)["conv_mass_transport"].sum().values
+    p0 = psi[int(f_c[0]), int(j_c[0]), int(i_c[0])]
+    p1 = psi[int(f_c[-1]), int(j_c[-1]), int(i_c[-1])]
+    assert np.isclose(abs(float(conv)), abs(p1 - p0), rtol=1e-9)
