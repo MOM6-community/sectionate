@@ -850,12 +850,13 @@ class _OuterTopology:
         each missing edge slot's value from the native storage of that physical
         edge (with the sign of the receiving face's own axis direction).
 
-        This is the topology-exact analogue of
-        ``xgcm.pad(..., other_component=...)``: instead of index-shifting a
-        halo (which can pick the wrong component or slice across a rotated
-        seam), every added slot is resolved through the corner-node graph to
-        the *stored* velocity of the same physical face. Edges stored on no
-        face (open walls, grid cuts) are zero -- a wall carries no transport.
+        This is the topology-exact, xgcm-independent analogue of
+        ``xgcm.pad(..., other_component=...)``: every added slot is resolved
+        through the corner-node graph to the *stored* velocity of the same
+        physical face. Unlike a halo pad it needs no vector rotation and, more
+        importantly, resolves edges that are stored on *no* face (open walls,
+        grid cuts, a cap's un-stored vertex) to zero -- a wall carries no
+        transport -- which no halo pad can supply a value for.
 
         Parameters
         ----------
