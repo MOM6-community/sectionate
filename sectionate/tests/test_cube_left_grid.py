@@ -290,3 +290,130 @@ def test_cube_closed_section_around_vertex_carries_zero_net_transport():
     conv = convergent_transport(grid, i_c, j_c, f_c, utr="u", vtr="v",
                                 layer=None)["conv_mass_transport"].sum().values
     assert abs(float(conv)) < 1e-12
+
+
+# --------------------------------------------------------------------------
+# Generalized builder for the coverage gaps flagged in review: right-staggering,
+# an OPEN grid (walls / grid cuts), and same-side (reverse=True) gluings. The
+# geometry is identical to `cube_left_grid`; only the staggering, the optional
+# face subset, and the `face_connections` differ.
+# --------------------------------------------------------------------------
+def _cube_variant(rots, stagger="left", faces=None, fc=None):
+    frames = _rotated_frames(rots)
+
+    def face_xyz(f, a, b):
+        c, u, v = frames[f]
+        p = c[:, None, None] + a[None] * u[:, None, None] + b[None] * v[:, None, None]
+        return p / np.linalg.norm(p, axis=0)
+
+    e = np.linspace(-1.0, 1.0, Nc + 1)
+    a, b = np.meshgrid(e, e, indexing="xy")
+    m = 0.5 * (e[:-1] + e[1:])
+    am, bm = np.meshgrid(m, m, indexing="xy")
+    fs = list(range(6)) if faces is None else list(faces)
+    cxyz_all = np.stack([np.moveaxis(face_xyz(f, a, b), 0, -1) for f in range(6)])
+    cxyz = np.stack([np.moveaxis(face_xyz(f, a, b), 0, -1) for f in fs])
+    cen = np.stack([np.moveaxis(face_xyz(f, am, bm), 0, -1) for f in fs])
+    lon_o, lat_o = _lonlat(cxyz)
+    lonh, lath = _lonlat(cen)
+    psi = _psi(cxyz)
+
+    if stagger == "left":
+        lonc, latc = lon_o[:, :Nc, :Nc], lat_o[:, :Nc, :Nc]
+        u = psi[:, 1:, :Nc] - psi[:, :-1, :Nc]
+        v = -(psi[:, :Nc, 1:] - psi[:, :Nc, :-1])
+        cpos = {"X": {"center": "i", "left": "i_g"},
+                "Y": {"center": "j", "left": "j_g"}}
+    else:  # right: the stored vorticity corner is the NE corner of each cell
+        lonc, latc = lon_o[:, 1:, 1:], lat_o[:, 1:, 1:]
+        u = psi[:, 1:, 1:] - psi[:, :-1, 1:]      # east face of cell (i, j)
+        v = -(psi[:, 1:, 1:] - psi[:, 1:, :-1])   # north face of cell (i, j)
+        cpos = {"X": {"center": "i", "right": "i_g"},
+                "Y": {"center": "j", "right": "j_g"}}
+
+    if fc is None:
+        fc = _derive_face_connections(cxyz_all)
+    ds = xr.Dataset(
+        {"u": (("face", "j", "i_g"), u), "v": (("face", "j_g", "i"), v)},
+        coords={
+            "i": np.arange(Nc), "j": np.arange(Nc),
+            "i_g": np.arange(Nc), "j_g": np.arange(Nc), "face": np.arange(len(fs)),
+            "geolon": (("face", "j", "i"), lonh), "geolat": (("face", "j", "i"), lath),
+            "geolon_c": (("face", "j_g", "i_g"), lonc),
+            "geolat_c": (("face", "j_g", "i_g"), latc),
+        },
+    )
+    grid = xgcm.Grid(ds, coords=cpos, boundary="fill", fill_value=np.nan,
+                     face_connections=fc, autoparse_metadata=False)
+    return grid, psi
+
+
+def test_cube_right_staggered_padded_transports_telescope():
+    """Same closed cube but native 'right' (NE-corner) staggering: the low-edge
+    fill path (`I==0`/`J==0`) must be exercised and convergence must still be
+    exactly zero cell-by-cell for the streamfunction flow."""
+    grid, _ = _cube_variant(_find_all_low_high_rotations(), stagger="right")
+    assert corner_position(grid) == "right"
+    ot = outer_topology(grid)
+    Uo, Vo = ot.padded_transports(grid._ds.u, grid._ds.v)
+    conv = (Uo[:, :, :-1] - Uo[:, :, 1:]) + (Vo[:, :-1, :] - Vo[:, 1:, :])
+    assert np.abs(conv).max() < 1e-12
+
+
+def test_open_wall_padded_transports_zeroes_walls_and_reads_seam_twin():
+    """An OPEN two-face grid (one shared seam, walls elsewhere) exercises the
+    edge-stored-on-no-face path that is otherwise only hit by real LLC90 data:
+    every wall halo slot must be exactly 0 (a wall carries no transport, never a
+    fabricated value), while the shared-seam halo slot must read the neighbour's
+    *stored* twin velocity."""
+    rots = _find_all_low_high_rotations()
+    full_fc = _derive_face_connections(_outer_corners_xyz())["face"]
+    # Deterministically pick a face whose Y-high edge glues, aligned and
+    # non-reversed, to a neighbour's Y-low edge (exists in this fixed cube). In
+    # 'left' staggering only the high edge gets an added halo slot, so f0's Y-high
+    # slot becomes the seam (reads the neighbour's stored low-edge v) and every
+    # other added slot on the two faces is a wall.
+    f0 = nbr = None
+    for f, axes in full_fc.items():
+        conn = axes["Y"][1]                       # Y-high connection
+        if conn is not None and conn[1] == "Y" and conn[2] is False:
+            f0, nbr = f, conn[0]
+            break
+    assert f0 is not None, "no aligned Y-high<->Y-low seam in the cube fixture"
+    # Two-face grid (remapped to faces 0, 1); only the f0<->nbr Y-seam is glued.
+    fc = {"face": {
+        0: {"X": (None, None), "Y": (None, (1, "Y", False))},
+        1: {"X": (None, None), "Y": ((0, "Y", False), None)},
+    }}
+    grid, _ = _cube_variant(rots, stagger="left", faces=[f0, nbr], fc=fc)
+    ot = outer_topology(grid)
+    Uo, Vo = ot.padded_transports(grid._ds.u, grid._ds.v)
+    v = np.asarray(grid._ds.v.values)
+
+    # 'left' staggering adds only the high slot (column/row Nc).
+    assert np.all(Uo[0, :, Nc] == 0.0)             # x-high edges are walls
+    assert np.all(Uo[1, :, Nc] == 0.0)
+    assert np.all(Vo[1, Nc, :] == 0.0)             # face 1's y-high edge is a wall
+    assert np.allclose(Vo[0, Nc, :], v[1, 0, :])   # seam reads face 1's stored twin
+    assert np.any(Vo[0, Nc, :] != 0.0)             # genuinely nonzero
+
+
+def test_same_side_reverse_gluing_raises():
+    """A same-side (`reverse=True`) gluing leaves a whole seam line of corners
+    stored on no face (degenerate on a staggered grid); `outer_topology` must
+    fail loudly rather than fabricate a topology."""
+    import itertools
+
+    def has_same_side_gluing(rots):
+        frames = _rotated_frames(rots)
+        for f, f2 in itertools.combinations(range(6), 2):
+            s = _shared_edge_sides(frames, f, f2)
+            if s is not None and s[0] == s[1]:
+                return True
+        return False
+
+    same_side = next(r for r in itertools.product(range(4), repeat=6)
+                     if has_same_side_gluing(r))
+    grid, _ = _cube_variant(same_side, stagger="left")
+    with pytest.raises((NotImplementedError, ValueError)):
+        outer_topology(grid)
