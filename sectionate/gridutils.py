@@ -476,6 +476,28 @@ class _OuterTopology:
         Nyc, Nxc = ds.sizes[Yc], ds.sizes[Xc]
         nyq, nxq = ds.sizes[cd["Y"]["corner"]], ds.sizes[cd["X"]["corner"]]
         pos = corner_position(grid)
+        # A same-side ('reverse=True') gluing on a non-symmetric ('left'/'right')
+        # grid meets along the *dropped* edge, so the shared-seam corners and their
+        # transports are stored on NO face -- they are simply absent from the arrays
+        # and no topology can recover missing data. Reject up front with a precise
+        # reason. ('outer' grids store every seam corner/edge as a twin and are
+        # handled below; opposite-side gluings store the seam on the low edge.)
+        if pos != "outer":
+            fc = grid._face_connections[facedim]
+            if any(
+                conn is not None and conn[2]
+                for face in fc.values() for sides in face.values() for conn in sides
+            ):
+                raise NotImplementedError(
+                    f"This grid is non-symmetric ('{pos}' staggering) and its "
+                    "`face_connections` include same-side ('reverse=True') gluings. "
+                    "On a 'left'/'right'-staggered grid such a seam meets along the "
+                    "dropped edge, so the shared-seam corners and their transports are "
+                    "stored on NO face -- they are absent from the arrays, and no "
+                    "conservative corner topology can recover missing data. Provide "
+                    "the grid in 'outer' (symmetric) staggering, which stores every "
+                    "seam corner and velocity face as a twin on both sides."
+                )
         # native corner (j, i) lives at outer slot (j+t, i+t)
         t = 1 if pos == "right" else 0
         nqy, nqx = Nyc + 1, Nxc + 1
@@ -637,18 +659,52 @@ class _OuterTopology:
                 parent[a], a = root, parent[a]
             return root
 
+        def slot_index(f, J, I):
+            return (f * nqy + J) * nqx + I
+
+        def _unslot(s):
+            return s // (nqx * nqy), (s // nqx) % nqy, s % nqx
+
         def union(a, b):
             ra, rb = find(a), find(b)
             if ra != rb:
                 parent[max(ra, rb)] = min(ra, rb)
 
-        def slot_index(f, J, I):
-            return (f * nqy + J) * nqx + I
-
         by_ident = {}
         by_loc = {}
         by_cells3 = {}
         finite = np.isfinite(xyz).all(axis=-1)
+
+        # Local spacing per slot (distance to the nearest finite in-face lattice
+        # neighbour). The cell-based merges below identify two slots as the same
+        # physical point from shared tracer cells; across a same-side ('reverse')
+        # seam the padded cell neighbourhoods of mirror-distinct seam corners can
+        # overlap in >=3 cells, so guard those merges with geometric coincidence:
+        # two slots more than half a cell apart are never the same point.
+        hscale = np.full((nf, nqy, nqx), np.inf)
+        for f in range(nf):
+            for J in range(nqy):
+                for I in range(nqx):
+                    if not finite[f, J, I]:
+                        continue
+                    for dJ, dI in ((0, 1), (0, -1), (1, 0), (-1, 0)):
+                        J1, I1 = J + dJ, I + dI
+                        if 0 <= J1 < nqy and 0 <= I1 < nqx and finite[f, J1, I1]:
+                            hscale[f, J, I] = min(
+                                hscale[f, J, I],
+                                float(np.linalg.norm(xyz[f, J, I] - xyz[f, J1, I1])),
+                            )
+
+        def coincident(a, b):
+            fa, Ja, Ia = _unslot(a)
+            fb, Jb, Ib = _unslot(b)
+            h = min(hscale[fa, Ja, Ia], hscale[fb, Jb, Ib])
+            if not np.isfinite(h):
+                return True  # isolated slot: cannot judge, keep prior behaviour
+            return (
+                float(np.linalg.norm(xyz[fa, Ja, Ia] - xyz[fb, Jb, Ib])) < 0.5 * h
+            )
+
         for f in range(nf):
             for J in range(nqy):
                 for I in range(nqx):
@@ -658,7 +714,8 @@ class _OuterTopology:
                     if ident[f, J, I, 0] >= 0:
                         k = tuple(int(v) for v in ident[f, J, I])
                         if k in by_ident:
-                            union(a, by_ident[k])
+                            if coincident(a, by_ident[k]):
+                                union(a, by_ident[k])
                         else:
                             by_ident[k] = a
                     lk = tuple(np.round(xyz[f, J, I], 9))
@@ -668,18 +725,21 @@ class _OuterTopology:
                         by_loc[lk] = a
                     # Two distinct corners can share at most two cells, so slots
                     # sharing three or four (their full usable set) are the same
-                    # physical point. Four-cell keys unify the twin storage of
-                    # shared-corner ('outer') tilings' seam corners; three-cell
-                    # keys unify the representations of a 3-valent cube vertex
-                    # stored on *no* face (each face's view drops only its own
-                    # unreliable diagonal cell).
+                    # physical point -- provided they are also geometrically
+                    # coincident (a same-side seam can make mirror-distinct corners
+                    # share cells; the guard rejects those). Four-cell keys unify
+                    # the twin storage of shared-corner ('outer') tilings' seam
+                    # corners; three-cell keys unify the representations of a
+                    # 3-valent cube vertex stored on *no* face (each face's view
+                    # drops only its own unreliable diagonal cell).
                     nu = usable4[f, J, I].sum()
                     if nu >= 3:
                         ck = frozenset(
                             int(c) for c, u in zip(cells4[f, J, I], usable4[f, J, I]) if u
                         )
                         if ck in by_cells3:
-                            union(a, by_cells3[ck])
+                            if coincident(a, by_cells3[ck]):
+                                union(a, by_cells3[ck])
                         else:
                             by_cells3[ck] = a
 
@@ -775,23 +835,6 @@ class _OuterTopology:
                                     cs.add(int(C[f, jp, ip]))
         bad = [n for n in range(n_nodes) if len(adj[n]) > 4]
         if bad:
-            fc = grid._face_connections[facedim]
-            has_reverse = any(
-                conn is not None and conn[2]
-                for face in fc.values() for sides in face.values() for conn in sides
-            )
-            if pos != "outer" and has_reverse:
-                raise NotImplementedError(
-                    f"This grid is non-symmetric ('{pos}' staggering) and its "
-                    "`face_connections` include same-side ('reverse=True') gluings. On "
-                    "a 'left'/'right'-staggered grid a same-side seam meets along the "
-                    "dropped edge, so the shared-seam corners and their transports are "
-                    "stored on NO face -- they are simply absent from the arrays, and no "
-                    "conservative corner topology can recover missing data. Only "
-                    "opposite-side ('reverse=False') gluings, or a symmetric ('outer') "
-                    "grid that stores every seam corner and velocity face on both sides, "
-                    "carry the data such a topology needs."
-                )
             raise NotImplementedError(
                 "Could not derive a consistent corner topology from this grid's "
                 "`face_connections` metadata (a corner point acquired more than four "

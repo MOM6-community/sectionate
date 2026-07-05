@@ -426,23 +426,16 @@ def test_same_side_reverse_gluing_raises():
         outer_topology(grid)
 
 
-@pytest.mark.xfail(
-    reason="outer+reverse not yet wired: the DATA is complete (0 unstored corners, "
-    "twins coincident to round-9) and outer all-low-high works, but _OuterTopology "
-    "over-connects reverse-seam corners (degree 6-7 vs 4) -- reverse-seam twin "
-    "adjacency merging is unimplemented. Fix pending; this test auto-flips when done.",
-    strict=True,
-    raises=NotImplementedError,
-)
 def test_outer_reverse_gluing_matches_by_coincidence():
-    """On an OUTER (symmetric) grid, a same-side ('reverse=True') gluing SHOULD be a
+    """On an OUTER (symmetric) grid, a same-side ('reverse=True') gluing is a
     non-issue: every seam corner and velocity face is stored on both faces as a
-    coincident twin (nothing dropped), so the topology should build with no unstored
-    nodes and a section crossing the reverse seams should carry transport equal to the
+    coincident twin (nothing dropped), so the topology builds with no unstored
+    nodes and a section crossing the reverse seams carries transport equal to the
     streamfunction difference of its endpoints -- exactly, including the twin sign
     reconciliation. This is the same base-frames cube that FAILS in 'left'
-    staggering (test_same_side_reverse_gluing_raises). Currently xfails: the data is
-    complete but the reverse-seam adjacency merge is not yet implemented."""
+    staggering (test_same_side_reverse_gluing_raises): there the same-side seam
+    meets along the dropped edge so the data is absent, whereas 'outer' stores it
+    as coincident twins that merge by geometric coincidence."""
     grid, psi = _cube_variant((0, 0, 0, 0, 0, 0), stagger="outer")   # base frames: has reverse
     assert corner_position(grid) == "outer"
     fc = grid._face_connections[grid._facedim]
