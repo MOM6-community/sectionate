@@ -225,6 +225,78 @@ def test_cube_topology_is_complete_and_consistent():
     assert np.count_nonzero(deg == 4) == len(deg) - 14
 
 
+def _coordinate_jittered_cube_left_grid(eps=2.0):
+    """`cube_left_grid` with a rigid, per-face random shift added to the CORNER
+    coordinate arrays only (the transports, cell identities and
+    `face_connections` are untouched).
+
+    A point where three faces meet but that lives on no native face is stored
+    once per touching face as an identity-less "ghost" corner whose position each
+    face must *extrapolate*. On the exact gnomonic cube all three faces
+    extrapolate the same coordinate, so they merge by pure geometric coincidence.
+    A real curvilinear grid instead extrapolates three slightly disagreeing
+    positions -- the LLC90 tiles 2/6/10 "pinwheel" is the archetype -- and the
+    coincidence merge fails. Shifting each face's corner coordinates rigidly by a
+    fraction of a cell reproduces exactly that disagreement (the shift is well
+    below half a cell, so genuine seam twins still coincide and the rest of the
+    topology is unchanged)."""
+    grid, psi = cube_left_grid()
+    ds = grid._ds.copy(deep=True)
+    rng = np.random.default_rng(1)
+    off = rng.uniform(-eps, eps, size=(ds.sizes["face"], 2))
+    lonc, latc = ds["geolon_c"].values.copy(), ds["geolat_c"].values.copy()
+    for f in range(ds.sizes["face"]):
+        lonc[f] += off[f, 0]
+        latc[f] += off[f, 1]
+    ds["geolon_c"] = (ds["geolon_c"].dims, lonc)
+    ds["geolat_c"] = (ds["geolat_c"].dims, latc)
+    grid2 = xgcm.Grid(
+        ds, coords={"X": {"center": "i", "left": "i_g"},
+                    "Y": {"center": "j", "left": "j_g"}},
+        padding="fill", fill_value=np.nan,
+        face_connections={grid._facedim: grid._face_connections[grid._facedim]},
+        autoparse_metadata=False,
+    )
+    return grid2, psi
+
+
+def test_disagreeing_extrapolation_junction_merges_and_conserves():
+    """Regression for MOM6-community/sectionate#49 (the LLC90 tiles 2/6/10
+    pinwheel). When the three faces meeting at a corner stored on no native face
+    extrapolate *disagreeing* ghost coordinates, the coordinate merges cannot see
+    that they are one physical point, so without the topological (surrounding-
+    cell) merge the junction splits into separate degree-0 nodes and the stored
+    radial velocity faces around it read as zero from every neighbour's frame --
+    leaking convergence into the junction cells.
+
+    Here the exact cube's two un-stored vertices are turned into that failure
+    mode by jittering each face's corner coordinates. The topological merge must
+    collapse each junction's three ghost slots back into a single node (so the
+    topology matches the un-jittered cube: exactly two non-native nodes, each the
+    union of its three faces' slots) and the outer-padded transports must again
+    telescope to zero cell-by-cell for the streamfunction flow.
+    """
+    grid, _ = _coordinate_jittered_cube_left_grid()
+    ot = outer_topology(grid)
+    assert (ot.node_id >= 0).all()
+
+    # (a) the disagreeing ghost slots collapse to one node per junction: exactly
+    #     two non-native nodes (as on the exact cube), each merging three slots
+    #     from three distinct faces -- not one split-off node per face.
+    nonnative = np.where(ot.node_native[:, 0] < 0)[0]
+    assert len(nonnative) == 2
+    for n in nonnative:
+        reps = ot.node_reps[n]
+        assert len(reps) == 3
+        assert len({f for (f, _, _) in reps}) == 3
+
+    # (b) with the junction unified, convergence telescopes to zero everywhere
+    #     (before the fix it leaks O(1e-2) into the junction cells).
+    Uo, Vo = ot.padded_transports(grid._ds.u, grid._ds.v)
+    conv = (Uo[:, :, :-1] - Uo[:, :, 1:]) + (Vo[:, :-1, :] - Vo[:, 1:, :])
+    assert np.abs(conv).max() < 1e-12
+
+
 def test_cube_padded_transports_telescope_exactly():
     """Cell convergence from the outer-padded transports is exactly zero for a
     streamfunction flow, cell by cell -- including along every rotated seam and

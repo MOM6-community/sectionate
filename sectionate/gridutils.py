@@ -771,6 +771,34 @@ class _OuterTopology:
                     if k2 != k:
                         union(slot_index(*loose[k]), slot_index(*loose[int(k2)]))
 
+        # Topological (coordinate-free) merge of a shared missing corner. A point
+        # where three or more faces meet but that lives on NO native face (a
+        # cube's un-stored vertex; a curvilinear multi-tile junction such as the
+        # LLC90 tiles 2/6/10 corner) is stored once per touching face as an
+        # identity-less ghost slot. Every one of those ghost slots looks out on
+        # the SAME ring of surrounding tracer cells -- the faces share that ring
+        # by construction -- so slots whose usable-cell set is identical are the
+        # same physical point and must become one node. The coincidence merges
+        # above already catch this when every face extrapolates the ghost to the
+        # same coordinate (the exact-geometry cube), but on real curvilinear data
+        # each face's extrapolated lon/lat differs by up to a fraction of a cell,
+        # so the geometric snap fails and the junction splits into degree-0
+        # nodes that leak transport (the stored radial velocity faces around the
+        # junction then read as zero from every neighbour's frame). Keying on the
+        # surrounding cells instead is immune to that extrapolation error. A
+        # genuine wall corner (no velocity stored on any surrounding face) still
+        # collapses to one node but acquires no edges below, so it stays a wall.
+        by_junction = {}
+        for (f, J, I) in loose:
+            u4 = usable4[f, J, I]
+            if u4.sum() < 3:
+                continue
+            key = frozenset(int(c) for c, u in zip(cells4[f, J, I], u4) if u)
+            if key in by_junction:
+                union(slot_index(f, J, I), slot_index(*by_junction[key]))
+            else:
+                by_junction[key] = (f, J, I)
+
         node_of_root = {}
         node_id = np.full((nf, nqy, nqx), -1, dtype=np.int64)
         node_native = []
