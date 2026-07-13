@@ -57,6 +57,29 @@ top-comment description so it stays consistent with the most recent commit:
 - Edit it in place with `gh pr edit <number> --repo <owner>/<repo> --body-file <file>` (find
   the PR for the current branch with `gh pr view --json number,url`).
 
+## AI Usage Policy
+
+AI-assisted contributions to sectionate are welcome, but the person running the AI is
+responsible for every change. This project follows the
+[xgcm AI Usage Policy](https://github.com/hdrake/xgcm/blob/add-Claude.md/docs/contributor_guide.md),
+which in turn adapts [xarray's](https://docs.xarray.dev/en/stable/contribute/ai-policy.html).
+It applies to every change regardless of whether it was written by hand, with AI
+assistance, or generated entirely by an AI tool. The essentials:
+
+- **You own the diff.** Before opening or updating a PR, you must have read and understood
+  every line and be able to explain why each change is correct — the same bar as a
+  hand-written PR. Keep changes small, single-purpose, and free of unrelated edits.
+- **Disclose AI assistance openly.** Add a `Co-Authored-By:` trailer to AI-assisted commits
+  and note on any PR or comment that was drafted with AI.
+- **Communicate in your own words.** PR descriptions, issue comments, and review responses
+  must be your own; do not paste AI-generated text as a comment. Using AI to polish your own
+  writing (grammar, phrasing) is fine as long as it introduces no inaccuracies.
+- **Every code change ships with tests** and, per the *Definition of Done* above, a green
+  suite and re-executed notebooks.
+- **Discuss large AI-assisted contributions first.** For a substantial refactor, new
+  subsystem, or migration, open an issue to agree scope before generating the diff — a large
+  diff is fast to produce and slow to review.
+
 ## Architecture
 
 The package is organized around a pipeline: define sections → map to grid → compute transports/tracers.
