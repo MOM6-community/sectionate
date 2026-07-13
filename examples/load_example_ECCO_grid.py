@@ -159,7 +159,7 @@ def _ecco_grid(ds):
     """Wrap a merged ECCO dataset in a native ('left'-staggered) multi-tile
     ``xgcm.Grid`` with the LLC90 tile topology encoded via ``face_connections``."""
     return xgcm.Grid(
-        ds, periodic=False, autoparse_metadata=False,
+        ds, padding="fill", autoparse_metadata=False,
         coords={"X": {"center": "i", "left": "i_g"},
                 "Y": {"center": "j", "left": "j_g"}},
         face_connections=LLC90_FACE_CONNECTIONS,

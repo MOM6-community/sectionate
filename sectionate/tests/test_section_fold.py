@@ -1,7 +1,7 @@
 """Tests for sections on single-tile grids with a bipolar north-fold boundary.
 
 The fold is expressed purely as an xgcm boundary, e.g.
-``boundary={"X": "periodic", "Y": {"fold": "corner"}}``; sectionate derives the
+``padding={"X": "periodic", "Y": {"fold": "corner"}}``; sectionate derives the
 seam connectivity from xgcm's padding with no fold-specific code of its own.
 """
 import os
@@ -29,7 +29,7 @@ def _fold_grid(nx=8, ny=5, pivot="corner"):
     return xgcm.Grid(
         ds,
         coords={"X": {"center": "xh", "right": "xq"}, "Y": {"center": "yh", "right": "yq"}},
-        boundary={"X": "periodic", "Y": {"fold": pivot}},
+        padding={"X": "periodic", "Y": {"fold": pivot}},
         autoparse_metadata=False,
     )
 
@@ -72,7 +72,7 @@ def test_fold_neighbor_connectivity():
     extend = xgcm.Grid(
         extend._ds,
         coords={"X": {"center": "xh", "right": "xq"}, "Y": {"center": "yh", "right": "yq"}},
-        boundary={"X": "periodic", "Y": "extend"},
+        padding={"X": "periodic", "Y": "extend"},
         autoparse_metadata=False,
     )
     ext_maps = build_neighbor_maps(extend, get_geo_corners(extend))
@@ -99,12 +99,12 @@ def test_fold_section_crosses_arctic_on_real_grid():
     lons = np.arange(0.0, 360.0 + 5.0, 5.0)
     lats = [80.0] * len(lons)
 
-    extend = xgcm.Grid(ds, coords=coords, boundary={"X": "periodic", "Y": "extend"},
+    extend = xgcm.Grid(ds, coords=coords, padding={"X": "periodic", "Y": "extend"},
                        autoparse_metadata=False)
     with pytest.raises(RuntimeError):
         grid_section(extend, lons, lats)  # cannot cross the fold without it
 
-    fold = xgcm.Grid(ds, coords=coords, boundary={"X": "periodic", "Y": {"fold": "corner"}},
+    fold = xgcm.Grid(ds, coords=coords, padding={"X": "periodic", "Y": {"fold": "corner"}},
                      autoparse_metadata=False)
     i_c, j_c, lons_c, lats_c = grid_section(fold, lons, lats)
     # The traced path hugs the requested latitude (it did not wander off the seam).

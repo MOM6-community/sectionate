@@ -21,7 +21,7 @@ boundary = {
     'X': 'periodic',
     'Y': 'extend'
 }
-grid = xgcm.Grid(ds, coords=coords, boundary=boundary, autoparse_metadata=False)
+grid = xgcm.Grid(ds, coords=coords, padding=boundary, autoparse_metadata=False)
 
 def modequal(a,b):
     return np.equal(np.mod(a, 360.), np.mod(b, 360.))

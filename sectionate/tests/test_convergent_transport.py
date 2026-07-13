@@ -30,7 +30,7 @@ def initialize_minimal_outer_grid():
         'X': "extend", # Specifying None causes this to default to `periodic` for some reason
         'Y': "extend"  # Specifying None causes this to default to `periodic` for some reason
     }
-    grid = xgcm.Grid(ds, coords=coords, boundary=boundary, autoparse_metadata=False)
+    grid = xgcm.Grid(ds, coords=coords, padding=boundary, autoparse_metadata=False)
     return grid
 
 def test_convergent_transport():
@@ -84,7 +84,7 @@ def initialize_minimal_spherical_grid():
         'X': "periodic",
         'Y': "extend"
     }
-    grid = xgcm.Grid(ds, coords=coords, boundary=boundary, autoparse_metadata=False)
+    grid = xgcm.Grid(ds, coords=coords, padding=boundary, autoparse_metadata=False)
     return grid
     
 def initialize_minimal_cartesian_grid():
@@ -110,7 +110,7 @@ def initialize_minimal_cartesian_grid():
         'X': {'outer': 'xq', 'center': 'xh'},
         'Y': {'outer': 'yq', 'center': 'yh'}
     }
-    grid = xgcm.Grid(ds, coords=coords, boundary={"X":"extend", "Y":"extend"},
+    grid = xgcm.Grid(ds, coords=coords, padding={"X":"extend", "Y":"extend"},
                      autoparse_metadata=False)
     return grid
 

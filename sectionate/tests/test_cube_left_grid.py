@@ -194,7 +194,7 @@ def cube_left_grid():
     grid = xgcm.Grid(
         ds, coords={"X": {"center": "i", "left": "i_g"},
                     "Y": {"center": "j", "left": "j_g"}},
-        boundary="fill", fill_value=np.nan,
+        padding="fill", fill_value=np.nan,
         face_connections=fc, autoparse_metadata=False,
     )
     return grid, psi
@@ -350,7 +350,7 @@ def _cube_variant(rots, stagger="left", faces=None, fc=None):
             "geolat_c": (("face", "j_g", "i_g"), latc),
         },
     )
-    grid = xgcm.Grid(ds, coords=cpos, boundary="fill", fill_value=np.nan,
+    grid = xgcm.Grid(ds, coords=cpos, padding="fill", fill_value=np.nan,
                      face_connections=fc, autoparse_metadata=False)
     return grid, psi
 

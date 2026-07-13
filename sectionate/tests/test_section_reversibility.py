@@ -33,7 +33,7 @@ def _fine_grid(nx=24, ny=20, seed=0):
         })
     return xgcm.Grid(ds, coords={"X": {"outer": "xq", "center": "xh"},
                                  "Y": {"outer": "yq", "center": "yh"}},
-                     boundary={"X": "extend", "Y": "extend"}, autoparse_metadata=False)
+                     padding={"X": "extend", "Y": "extend"}, autoparse_metadata=False)
 
 
 def _assert_reverse_equal(grid, lon, lat, curve="great circle"):

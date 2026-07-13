@@ -15,19 +15,20 @@ pip install -e .
 ```
 
 **Local development environment:** use the `docs_env_sectionate` conda env
-(`/opt/anaconda3/envs/docs_env_sectionate`) for developing this package — running the
+(`~/anaconda3/envs/docs_env_sectionate`) for developing this package — running the
 test suite, executing the example notebooks, and any package work in this workspace.
-Keep it updated as needed; in particular it must carry the unreleased **fold-aware
-xgcm** (`hdrake/xgcm@tripolar-north-fold`, which includes the bipolar fold #711 and the
-face-connection padding fix #713). The ECCO example (notebook 5) pulls its data subset
+Keep it updated as needed; in particular it must carry the unreleased **xgcm v1.0.0
+line** (`hdrake/xgcm@dev-v1.0.0`, which folds in the bipolar fold #711, the
+face-connection padding fix #712, and the bare-`DataArray` `other_component` vector-pad
+fix #749). The ECCO example (notebook 5) pulls its data subset
 from Zenodo (concept DOI `10.5281/zenodo.21051424`) via stdlib `urllib` with MD5 checks —
 no `earthaccess`/Earthdata login needed. Install xgcm with
-`pip install "git+https://github.com/hdrake/xgcm.git@tripolar-north-fold"`.
+`pip install "git+https://github.com/hdrake/xgcm.git@dev-v1.0.0"`.
 Caveat: that dev build reports version `0.1.devNNN`, which is `< 0.9.0`, so re-running
 `pip install -e .` (sectionate requires `xgcm>=0.9.0`) silently reinstalls a released xgcm
-over it; reinstall the fold-aware xgcm afterwards with `--no-deps`. A correctly set up env
-runs the full suite with **0 skips** (fold tests require the fold-aware xgcm; they `skip`
-otherwise).
+over it; reinstall the v1.0.0-line xgcm afterwards with `--force-reinstall --no-deps`. A
+correctly set up env runs the full suite with **0 skips** (fold tests require this xgcm;
+they `skip` otherwise).
 
 ## Commands
 

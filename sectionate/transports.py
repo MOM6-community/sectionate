@@ -503,7 +503,7 @@ def convergent_transport(
         positive_in = is_mask_inside(positive_in, grid, sect)
         
     else:
-        if (geometry == "cartesian") and (grid.axes["X"].boundary == "periodic"):
+        if (geometry == "cartesian") and (grid.axes["X"].padding == "periodic"):
             raise ValueError("Periodic cartesian domains are not yet supported!")
         coords = coord_dict(grid)
         geo_corners = get_geo_corners(grid)
@@ -771,7 +771,7 @@ def is_mask_inside(mask, grid, sect, idx=0):
 
 def wrap_idx(idx, grid, axis):
     coords = coord_dict(grid)
-    if grid.axes[axis].boundary == "periodic":
+    if grid.axes[axis].padding == "periodic":
         idx = np.mod(idx, grid._ds[coords[axis]["center"]].size)
     else:
         idx = np.minimum(idx, grid._ds[coords[axis]["center"]].size-1)

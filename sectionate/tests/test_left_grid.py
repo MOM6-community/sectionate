@@ -40,7 +40,7 @@ def _outer_grid(Nh=6, Ny=6, seed=0):
         })
     grid = xgcm.Grid(ds, coords={"X": {"outer": "xq", "center": "xh"},
                                  "Y": {"outer": "yq", "center": "yh"}},
-                     boundary={"X": "extend", "Y": "extend"}, autoparse_metadata=False)
+                     padding={"X": "extend", "Y": "extend"}, autoparse_metadata=False)
     return grid
 
 
@@ -62,7 +62,7 @@ def _left_from_outer(outer):
         })
     return xgcm.Grid(dsl, coords={"X": {"left": "xq", "center": "xh"},
                                   "Y": {"left": "yq", "center": "yh"}},
-                     boundary={"X": "extend", "Y": "extend"}, autoparse_metadata=False)
+                     padding={"X": "extend", "Y": "extend"}, autoparse_metadata=False)
 
 
 def _matched_single_and_split_left(Nh=4, Ny=4, seed=0):
@@ -88,7 +88,7 @@ def _matched_single_and_split_left(Nh=4, Ny=4, seed=0):
             "geolon": (("yh", "xh"), np.broadcast_to(xh, (Ny, nxh))),
             "geolat": (("yh", "xh"), np.broadcast_to(yh[:, None], (Ny, nxh))),
         })
-    single = xgcm.Grid(ds_s, coords=coords, boundary={"X": "extend", "Y": "extend"},
+    single = xgcm.Grid(ds_s, coords=coords, padding={"X": "extend", "Y": "extend"},
                        autoparse_metadata=False)
 
     LONc = np.stack([np.broadcast_to(xq[0:Nh], (Ny, Nh)), np.broadcast_to(xq[Nh:2 * Nh], (Ny, Nh))])
@@ -106,7 +106,7 @@ def _matched_single_and_split_left(Nh=4, Ny=4, seed=0):
             "geolon": (("face", "yh", "xh"), LON), "geolat": (("face", "yh", "xh"), LAT),
         })
     fc = {"face": {0: {"X": (None, (1, "X", False))}, 1: {"X": ((0, "X", False), None)}}}
-    split = xgcm.Grid(ds_f, coords=coords, boundary="fill", fill_value=np.nan,
+    split = xgcm.Grid(ds_f, coords=coords, padding="fill", fill_value=np.nan,
                       face_connections=fc, autoparse_metadata=False)
     return single, split
 
@@ -141,7 +141,7 @@ def test_right_corner_offset():
     })
     grid = xgcm.Grid(ds, coords={"X": {"right": "xq", "center": "xh"},
                                  "Y": {"right": "yq", "center": "yh"}},
-                     boundary="extend", autoparse_metadata=False)
+                     padding="extend", autoparse_metadata=False)
     assert corner_position(grid) == "right"
     assert corner_offset(grid) == 1
     assert check_outer(grid) is False

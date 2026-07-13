@@ -248,7 +248,7 @@ def grid_section(grid, lons, lats, curve="great circle"):
     Compute composite section along model `grid` velocity faces that approximates paths
     between consecutive points defined by (lons, lats).
 
-    The grid topology is inferred entirely from the `grid` metadata: each axis' `boundary`
+    The grid topology is inferred entirely from the `grid` metadata: each axis' `padding`
     condition ("periodic" wraps, otherwise clip) for single-tile grids, and `face_connections`
     for multi-tile grids (e.g. the lat-lon-cap or cubed-sphere).
 
@@ -304,7 +304,7 @@ def _check_supported_topology(grid):
 
     A tripolar/bipolar north fold expressed as a `face_connections` self-connection (a face that
     connects to itself along the "Y" axis) is not supported. Use the single-tile bipolar-fold
-    boundary instead -- ``boundary={"X": "periodic", "Y": {"fold": "corner"}}`` (xgcm >= the
+    padding instead -- ``padding={"X": "periodic", "Y": {"fold": "corner"}}`` (xgcm >= the
     bipolar-fold release) -- which sectionate handles natively via xgcm's fold padding.
     """
     facedim = grid._facedim
@@ -319,8 +319,8 @@ def _check_supported_topology(grid):
                     raise NotImplementedError(
                         "Grids that represent the tripolar/bipolar north fold as a face that "
                         "connects to itself (a `face_connections` self-connection) are not "
-                        "supported. Build the grid as a single tile with the fold expressed as a "
-                        "boundary instead: boundary={'X':'periodic','Y':{'fold':'corner'}}."
+                        "supported. Build the grid as a single tile with the fold expressed as "
+                        "padding instead: padding={'X':'periodic','Y':{'fold':'corner'}}."
                     )
 
 def create_section_composite(

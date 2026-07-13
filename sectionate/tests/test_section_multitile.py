@@ -24,7 +24,7 @@ def _make_grid(lon, lat, face_connections):
     return xgcm.Grid(
         ds,
         coords={"X": {"outer": "xg"}, "Y": {"outer": "yg"}},
-        boundary="fill", fill_value=np.nan,
+        padding="fill", fill_value=np.nan,
         face_connections=face_connections,
         autoparse_metadata=False,
     )
@@ -64,7 +64,7 @@ def left_two_tile_x_to_y(Nc=5):
     fc = {"face": {0: {"X": (None, (1, "Y", False))}, 1: {"Y": ((0, "X", False), None)}}}
     return xgcm.Grid(
         ds, coords={"X": {"center": "i", "left": "i_g"}, "Y": {"center": "j", "left": "j_g"}},
-        boundary="fill", fill_value=np.nan, face_connections=fc, autoparse_metadata=False)
+        padding="fill", fill_value=np.nan, face_connections=fc, autoparse_metadata=False)
 
 
 def two_face_x_to_y(Nc=4):
@@ -162,8 +162,8 @@ def test_neighbor_maps_left_grid_rotated_seam_are_edge_adjacent():
     cid = xr.DataArray(np.arange(nf * ny * nx, dtype=float).reshape(nf, ny, nx),
                        dims=("face", "j", "i"), coords={"face": [0, 1]})
     bw = {ax: (1, 1) for ax in grid.axes}
-    bdy = {ax: grid.axes[ax].boundary for ax in grid.axes}
-    C = pad(cid, grid, bw, boundary=bdy, fill_value=np.nan).transpose("face", ..., "j", "i").values
+    bdy = {ax: grid.axes[ax].padding for ax in grid.axes}
+    C = pad(cid, grid, bw, padding=bdy, fill_value=np.nan).transpose("face", ..., "j", "i").values
 
     def cells(f, j, i):  # the (up to four) cells touching corner (f, j, i)
         v = (C[f, j, i], C[f, j, i + 1], C[f, j + 1, i], C[f, j + 1, i + 1])
@@ -256,7 +256,7 @@ def _two_face_transport_grid(Nc=3):
                    1: {"X": ((0, "X", False), None)}}}
     grid = xgcm.Grid(ds, coords={"X": {"outer": "xq", "center": "xh"},
                                  "Y": {"outer": "yq", "center": "yh"}},
-                     boundary="fill", fill_value=np.nan,
+                     padding="fill", fill_value=np.nan,
                      face_connections=fc, autoparse_metadata=False)
     return grid
 
@@ -266,7 +266,7 @@ def _single_face_slab(grid, face):
     ds = grid._ds.isel({grid._facedim: face}).drop_vars(grid._facedim)
     return xgcm.Grid(ds, coords={"X": {"outer": "xq", "center": "xh"},
                                  "Y": {"outer": "yq", "center": "yh"}},
-                     boundary={"X": "extend", "Y": "extend"}, autoparse_metadata=False)
+                     padding={"X": "extend", "Y": "extend"}, autoparse_metadata=False)
 
 
 def test_within_face_transport_matches_single_tile():
@@ -344,7 +344,7 @@ def _matched_single_and_split(Nh=4, Ny=4, seed=0):
     )
     single = xgcm.Grid(ds_s, coords={"X": {"outer": "xq", "center": "xh"},
                                      "Y": {"outer": "yq", "center": "yh"}},
-                       boundary={"X": "extend", "Y": "extend"}, autoparse_metadata=False)
+                       padding={"X": "extend", "Y": "extend"}, autoparse_metadata=False)
 
     # two faces: cols [0:Nh] and [Nh:2Nh]; faces share the boundary corner column at Nh.
     def face_slices(arr_q, arr_h):
@@ -371,7 +371,7 @@ def _matched_single_and_split(Nh=4, Ny=4, seed=0):
     fc = {"face": {0: {"X": (None, (1, "X", False))}, 1: {"X": ((0, "X", False), None)}}}
     split = xgcm.Grid(ds_f, coords={"X": {"outer": "xq", "center": "xh"},
                                     "Y": {"outer": "yq", "center": "yh"}},
-                      boundary="fill", fill_value=np.nan,
+                      padding="fill", fill_value=np.nan,
                       face_connections=fc, autoparse_metadata=False)
     return single, split
 
@@ -418,7 +418,7 @@ def _matched_single_and_split_nonsym(Nh=4, Ny=4, seed=0):
             "geolon": (("yh", "xh"), np.broadcast_to(xh, (Ny, nxh))),
             "geolat": (("yh", "xh"), np.broadcast_to(yh[:, None], (Ny, nxh))),
         })
-    single = xgcm.Grid(ds_s, coords=coords, boundary={"X": "extend", "Y": "extend"},
+    single = xgcm.Grid(ds_s, coords=coords, padding={"X": "extend", "Y": "extend"},
                        autoparse_metadata=False)
 
     LONc = np.stack([np.broadcast_to(xq[0:Nh], (Ny, Nh)), np.broadcast_to(xq[Nh:2 * Nh], (Ny, Nh))])
@@ -436,7 +436,7 @@ def _matched_single_and_split_nonsym(Nh=4, Ny=4, seed=0):
             "geolon": (("face", "yh", "xh"), LON), "geolat": (("face", "yh", "xh"), LAT),
         })
     fc = {"face": {0: {"X": (None, (1, "X", False))}, 1: {"X": ((0, "X", False), None)}}}
-    split = xgcm.Grid(ds_f, coords=coords, boundary="fill", fill_value=np.nan,
+    split = xgcm.Grid(ds_f, coords=coords, padding="fill", fill_value=np.nan,
                       face_connections=fc, autoparse_metadata=False)
     return single, split
 
@@ -494,7 +494,7 @@ def rotated_two_face_streamfunction():
         })
     fc = {"face": {0: {"X": (None, (1, "Y", False))}, 1: {"Y": ((0, "X", False), None)}}}
     return xgcm.Grid(ds, coords={"X": {"outer": "xq", "center": "xh"}, "Y": {"outer": "yq", "center": "yh"}},
-                     boundary="fill", fill_value=np.nan, face_connections=fc, autoparse_metadata=False)
+                     padding="fill", fill_value=np.nan, face_connections=fc, autoparse_metadata=False)
 
 
 def test_rotated_seam_transport_streamfunction():

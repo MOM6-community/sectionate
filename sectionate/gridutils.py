@@ -182,9 +182,9 @@ def build_neighbor_maps(grid, geocorners):
 
     Builds index-valued DataArrays holding each corner point's own ([face,] j, i),
     pads them by one cell with `xgcm` -- which fills the halos using the grid's
-    boundary metadata, whatever it encodes: a periodic wrap, a fill/extend wall,
+    padding metadata, whatever it encodes: a periodic wrap, a fill/extend wall,
     the connections of a multi-tile grid (`face_connections`, with any axis
-    rotation and reversal), or a bipolar north fold (`boundary={"Y": {"fold": ...}}`,
+    rotation and reversal), or a bipolar north fold (`padding={"Y": {"fold": ...}}`,
     mirror + relabel across the seam) -- then reads the halos to obtain each
     point's four neighbors. All of the intricate topology logic therefore lives
     upstream in xgcm; sectionate only reads the resulting connectivity.
@@ -204,7 +204,7 @@ def build_neighbor_maps(grid, geocorners):
     Parameters
     ----------
     grid: xgcm.Grid
-        Any C-grid. Topology is taken from its axis `boundary`/`face_connections`.
+        Any C-grid. Topology is taken from its axis `padding`/`face_connections`.
     geocorners: dict
         Output of `get_geo_corners`; `geocorners["X"]` is the corner-position
         longitude DataArray, dims (Y, X) or (face, Y, X).
@@ -246,11 +246,11 @@ def build_neighbor_maps(grid, geocorners):
     own_j = np.broadcast_to(np.arange(ny)[:, None], shape)
     own_i = np.broadcast_to(np.arange(nx), shape)
 
-    boundary = {ax: grid.axes[ax].boundary for ax in grid.axes}
-    boundary_width = {ax: (1, 1) for ax in grid.axes}
+    padding = {ax: grid.axes[ax].padding for ax in grid.axes}
+    padding_width = {ax: (1, 1) for ax in grid.axes}
 
     def pad(a):
-        return _module_pad(a, grid, boundary_width, boundary=boundary, fill_value=np.nan)
+        return _module_pad(a, grid, padding_width, padding=padding, fill_value=np.nan)
 
     pj, pi = pad(jarr), pad(iarr)
 
@@ -300,11 +300,11 @@ def _multitile_padded_maps(grid, geocorners):
     own_j = np.broadcast_to(np.arange(ny)[:, None], shape)
     own_i = np.broadcast_to(np.arange(nx), shape)
 
-    boundary = {ax: grid.axes[ax].boundary for ax in grid.axes}
-    boundary_width = {ax: (1, 1) for ax in grid.axes}
+    padding = {ax: grid.axes[ax].padding for ax in grid.axes}
+    padding_width = {ax: (1, 1) for ax in grid.axes}
 
     def pad(a):
-        return _module_pad(a, grid, boundary_width, boundary=boundary, fill_value=np.nan)
+        return _module_pad(a, grid, padding_width, padding=padding, fill_value=np.nan)
 
     pj, pi, pf = pad(jarr), pad(iarr), pad(farr)
 
@@ -514,13 +514,13 @@ class _OuterTopology:
         # topology; every non-seam boundary pads NaN so walls stay walls ---
         def _seam_or_fill(b):
             return b if b == "periodic" else "fill"
-        boundary = {ax: _seam_or_fill(grid.axes[ax].boundary) for ax in grid.axes}
+        padding = {ax: _seam_or_fill(grid.axes[ax].padding) for ax in grid.axes}
         cid = xr.DataArray(
             np.arange(nf * Nyc * Nxc, dtype=float).reshape(nf, Nyc, Nxc),
             dims=(facedim, Yc, Xc),
         )
         bw = {ax: (1, 1) for ax in grid.axes}
-        C = _module_pad(cid, grid, bw, boundary=boundary, fill_value=np.nan)
+        C = _module_pad(cid, grid, bw, padding=padding, fill_value=np.nan)
         C = C.transpose(facedim, ..., Yc, Xc).values  # (nf, Nyc+2, Nxc+2)
         # A diagonally-padded halo cell is a pad of a pad: across two seams it
         # is not reliable, so it never participates in identity matching.

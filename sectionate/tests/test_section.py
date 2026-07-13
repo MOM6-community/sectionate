@@ -31,7 +31,7 @@ def _latlon_neighbor_maps():
             "geolat": (("yh", "xh"), lat.astype(float)),
         }),
         coords={"X": {"center": "xh", "right": "xq"}, "Y": {"center": "yh", "right": "yq"}},
-        boundary={"X": "periodic", "Y": "extend"},
+        padding={"X": "periodic", "Y": "extend"},
         autoparse_metadata=False,
     )
     return build_neighbor_maps(g, get_geo_corners(g))
@@ -148,7 +148,7 @@ def test_zero_length_seam_face_dropped():
             "geolon": (("yh", "xh"), lon2), "geolat": (("yh", "xh"), lat2),
         }),
         coords={"X": {"center": "xh", "outer": "xq"}, "Y": {"center": "yh", "outer": "yq"}},
-        boundary={"X": "periodic", "Y": "extend"}, autoparse_metadata=False,
+        padding={"X": "periodic", "Y": "extend"}, autoparse_metadata=False,
     )
     # short way from 315 deg to 45 deg runs east across the periodic seam
     i_c, j_c, lons_c, lats_c = grid_section(g, [315., 45.], [0., 0.])
