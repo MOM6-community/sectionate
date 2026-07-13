@@ -461,13 +461,20 @@ def _check_segment_span(lon1, lat1, lon2, lat2, curve):
     - "latitude circle": the longitude change must be less than 180 degrees; at or beyond
       that the east/west direction is equally far either way (and a full circle is
       degenerate). Longitudes are taken as given, so write a >180-degree arc with one or
-      more intermediate waypoints (e.g. split 0 -> 270 into 0 -> 135 -> 270).
+      more intermediate waypoints (e.g. split 0 -> 270 into 0 -> 135 -> 270). Endpoints
+      that coincide modulo 360 degrees (e.g. a 360 -> 0 loop closure) describe a
+      zero-length segment, not a full circle, and are allowed.
     - "great circle": the endpoints must not be (near-)antipodal, where infinitely many
       geodesics connect them.
     """
     if curve == "latitude circle":
         dlon = abs(lon2 - lon1)
-        if dlon >= 180.:
+        # Wrapped longitude change in (-180, 180]. A magnitude near 0 means the endpoints
+        # coincide modulo 360 degrees -- a zero-length segment (e.g. a 360 -> 0 loop
+        # closure) with no east/west ambiguity -- so it is allowed even though the raw
+        # dlon is a multiple of 360. Genuine arcs keep the "taken as given" rule below.
+        wrapped = (lon2 - lon1 + 180.) % 360. - 180.
+        if abs(wrapped) > 1.e-9 and dlon >= 180.:
             raise ValueError(
                 f"Latitude-circle segment from lon={lon1} to lon={lon2} spans {dlon} "
                 "degrees of longitude; each segment must span less than 180 degrees, "
