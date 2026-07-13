@@ -260,6 +260,49 @@ def test_cube_section_transport_is_streamfunction_difference(lonlat):
     assert np.isclose(abs(conv), abs(dpsi), rtol=1e-9)
 
 
+@pytest.mark.parametrize("lonlat,faces_expected", [
+    (((0., 178.), (55., 55.)), {4}),        # confined to the +Z (polar) face
+    (((0., 179.), (30., 30.)), {0, 2, 4}),  # over the pole *and* across rotated seams
+])
+def test_cube_section_over_pole_has_stable_geometric_sign(lonlat, faces_expected):
+    """A section whose great circle passes over the geographic north pole -- the one
+    soft spot of the geometric per-edge sign that Geoff flagged in review.
+
+    ``_left_sign`` (transports.py) orients each edge by a cross product in a local
+    flat (east, north) frame, which degenerates exactly at the pole: ``cos(lat) -> 0``
+    shrinks the east component and longitude is ill-defined at the +Z face-center
+    corner, which this cube stores right on ``lat = 90``. The pole-adjacent edges
+    carry real flux, so a sign that flipped there would break the telescoping
+    equality by a finite amount. The single-tile bipolar fold signs via
+    ``Usign``/``Vsign`` instead, so this multi-tile cube (whose polar cap actually
+    invokes ``_left_sign``) is where the concern must be pinned down.
+    """
+    grid, psi = cube_left_grid()
+    (lon0, lon1), (lat0, lat1) = lonlat
+    i_c, j_c, f_c, lons_c, lats_c = grid_section(grid, [lon0, lon1], [lat0, lat1])
+
+    # The walked path really does pass *through* the pole corner (else the near-pole
+    # degeneracy is never exercised and the test is vacuous), and does so in its
+    # interior -- so a pole-adjacent edge exists on either side of that corner.
+    at_pole = np.where(np.asarray(lats_c) > 89.9)[0]
+    assert at_pole.size >= 1
+    assert 0 < int(at_pole[0]) < len(lats_c) - 1
+    assert set(np.asarray(f_c).tolist()) == faces_expected
+
+    conv = convergent_transport(grid, i_c, j_c, f_c, utr="u", vtr="v",
+                                layer=None)["conv_mass_transport"]
+    # The most pole-adjacent velocity face genuinely carries flux, so its sign is
+    # not free to be wrong-yet-harmless.
+    polest = int(np.argmax(np.asarray(conv["lat"].values)))
+    assert abs(float(conv.values[polest])) > 1e-6
+
+    # ...and with every edge signed (the pole-adjacent ones included), the transport
+    # telescopes to the endpoint streamfunction difference -- so the pole sign is right.
+    dpsi = (psi[int(f_c[-1]), int(j_c[-1]), int(i_c[-1])]
+            - psi[int(f_c[0]), int(j_c[0]), int(i_c[0])])
+    assert np.isclose(abs(float(conv.sum().values)), abs(float(dpsi)), rtol=1e-9)
+
+
 def test_cube_closed_section_around_vertex_carries_zero_net_transport():
     """A closed section encircling a cube vertex (crossing three faces and their
     rotated seams; the vertex itself is stored on at most one face) must carry
