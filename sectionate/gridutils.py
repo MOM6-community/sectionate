@@ -586,7 +586,10 @@ class _OuterTopology:
                 return  # a flanking neighbour is a wall: no diagonal cell exists
             g0 = (f_ * Nyc + jcell) * Nxc + icell
             cand = (_cell_edge_neighbors(int(ga)) & _cell_edge_neighbors(int(gb))) - {g0}
-            if len(cand) == 1:  # ambiguous/empty -> genuine junction/wall, leave NaN
+            # Exactly one common neighbour is the diagonal cell; an empty or
+            # ambiguous intersection means a genuine 3-face junction or open wall,
+            # which has no diagonal cell -- leave it NaN for the later merges.
+            if len(cand) == 1:
                 C[f_, Jp, Ip] = float(next(iter(cand)))
                 rel[f_, Jp, Ip] = True
 
@@ -672,6 +675,18 @@ class _OuterTopology:
                     cu = sorted(int(c) for c, uu in zip(cells4[f, J, I], u) if uu)
                     for sub in itertools.combinations(cu, 3):
                         cell3_to_native.setdefault(frozenset(sub), set()).add((f, j, i))
+        # Unlike the `by_cells3` *node* merge below, this identity match needs no
+        # geometric `coincident` guard. That guard exists because a same-side
+        # ('reverse') seam can make the *padded* cell neighbourhoods of two
+        # mirror-distinct corners overlap. But such a seam is only ever allowed on
+        # an 'outer' grid (staggered grids with a reverse gluing raise up front,
+        # see above), and on an 'outer' grid every seam corner is a 4-usable-cell
+        # twin already resolved by `cellkey_to_native` -- so nothing reaches this
+        # 3-usable-cell path there (verified: 0 assignments on the outer+reverse
+        # cube). Where this path does run (staggered grids, no reverse gluing),
+        # three tracer cells meet at a single physical corner, so the 3-cell key is
+        # unambiguous; a key that maps to more than one native corner (`len > 1`,
+        # which a genuine grid never produces here) is skipped rather than guessed.
         for f, J, I in zip(*np.where(ident[..., 0] < 0)):
             u = usable4[f, J, I]
             if u.sum() != 3:
@@ -708,13 +723,23 @@ class _OuterTopology:
         nat_xyz = _lonlat_to_xyz(nat_lon, nat_lat).reshape(-1, 3)
         nat_ok = np.isfinite(nat_xyz).all(axis=1)
 
+        # A genuine, physically distinct corner sits at least ~half a spacing away
+        # (measured minimum on LLC90: 0.5); a true coincidence lands within
+        # SNAP_FRACTION (measured maximum: 0.06 -- a ~6x margin). The band between
+        # is a "no man's land" that a well-posed grid never puts a two-cell fallback
+        # corner in: `_snap` returns the nearest native corner's index and, for a
+        # two-usable-cell slot, its distance ratio so the caller can raise if that
+        # ratio is unexpectedly in the ambiguous band (see the raise below).
+        DISTINCT_FRACTION = 0.5
+
         def _snap(p, h):
             d = np.linalg.norm(nat_xyz - p, axis=1)
             d[~nat_ok] = np.inf
             k = int(np.argmin(d))
+            ratio = (d[k] / h) if h else np.inf
             if d[k] < self.SNAP_FRACTION * h:
-                return np.unravel_index(k, (nf, nyq, nxq))
-            return None
+                return np.unravel_index(k, (nf, nyq, nxq)), ratio
+            return None, ratio
 
         # Only extrapolate from *identified* slots: two faces meeting at a wall
         # corner then extrapolate from bit-identical sources and produce
@@ -729,6 +754,7 @@ class _OuterTopology:
             for (f, J, I) in pending:
                 placed = False
                 extrap = None
+                best_fail_ratio = np.inf
                 for dJ, dI in ((0, 1), (0, -1), (1, 0), (-1, 0)):
                     J1, I1, J2, I2 = J + dJ, I + dI, J + 2 * dJ, I + 2 * dI
                     if not (0 <= J2 < nqy and 0 <= I2 < nqx):
@@ -748,16 +774,36 @@ class _OuterTopology:
                     h = np.linalg.norm(x1 - x2)
                     if h == 0.0:
                         continue
-                    hit = _snap(p, h)
+                    hit, ratio = _snap(p, h)
                     if hit is not None:
                         ident[f, J, I] = hit
                         xyz[f, J, I] = nat_xyz[np.ravel_multi_index(hit, (nf, nyq, nxq))]
                         placed = progressed = True
                         break
+                    best_fail_ratio = min(best_fail_ratio, ratio)
                     if extrap is None:
                         extrap = p
                 if not placed:
                     if extrap is not None:
+                        # A two-usable-cell slot has a native storage iff it snaps
+                        # (its two cells cannot fingerprint it topologically). If it
+                        # instead lands in the ambiguous band -- too far to match a
+                        # native corner, too close to be a distinct one -- the
+                        # geometry is pathological and silently demoting it to a wall
+                        # could drop real transport. Raise instead (this never fires
+                        # on LLC90; the fallback corners snap with a ~6x margin).
+                        if (usable4[f, J, I].sum() == 2
+                                and self.SNAP_FRACTION <= best_fail_ratio < DISTINCT_FRACTION):
+                            raise ValueError(
+                                "A two-cell corner could not be resolved: its nearest "
+                                "native corner lies at %.2f of the local corner spacing "
+                                "-- beyond the snap-acceptance band (%.2f) yet closer "
+                                "than a distinct corner (%.2f). The coordinate fallback "
+                                "cannot safely resolve this ambiguous geometry, so "
+                                "sectionate raises rather than silently demote the corner "
+                                "to a transport-less wall." % (
+                                    best_fail_ratio, self.SNAP_FRACTION, DISTINCT_FRACTION)
+                            )
                         # open wall: keep the extrapolated position, no identity
                         xyz[f, J, I] = extrap
                         progressed = True
@@ -868,22 +914,29 @@ class _OuterTopology:
                         else:
                             by_cells3[ck] = a
 
-        # Identity-less slots (points stored on no face) at the two coincident
-        # lips of a grid cut are merged by *approximate* coincidence. The LLC90
-        # southern domain is slit along the 65E/115W polar great circle: the mesh
-        # is cut open along that meridian pair under Antarctica, leaving two
-        # coincident, reversed-index lips. The stored (native) lip -- tiles 0/3 at
-        # lon +65 -- is already merged exactly by `by_loc` above (its corners carry
-        # velocity, e.g. one node with reps on both tile 0 and tile 3). This step
-        # handles the UNSTORED lip -- tiles 9/12 at lon -115, degree-0 wall corners
-        # -- whose two sides extrapolate to the same physical points (verified
-        # coincident to <1e-3 deg). Because the two lips are unconnected in
+        # Identity-less slots (points stored on no face) at the coincident lips of
+        # a grid cut are merged by *approximate* coincidence. The LLC90 southern
+        # domain is slit along the 65E/115W polar great circle: the mesh is cut
+        # open along that meridian pair under Antarctica, leaving coincident,
+        # reversed-index lips. Because the two lips are unconnected in
         # `face_connections`, neither tile's cells enter the other's halo, so the
-        # coincidence carries NO shared tracer-cell signal and can only be seen
-        # from coordinates. Merging them lets a region tracer recognise the cut's
-        # two sides as one wall; it has no transport impact (both are degree-0).
-        # Native corners are never involved here (exact identification handled
-        # them).
+        # coincidence carries NO shared tracer-cell signal -- it can only be seen
+        # from coordinates.
+        #
+        # Along the 115W (tiles 9/12) side the lip is NOT uniform:
+        #  - Equatorward (lat ~ -88 to -80), tile-9 and tile-12 corners are each
+        #    stored on no face. This step merges those coincident pairs, so the
+        #    cut's two sides read as one wall for a region tracer. These are the
+        #    degree-0 lip and carry no transport.
+        #  - Poleward (lat ~ -88 to -90), the cut meets the *stored* 65E lip: the
+        #    tile-9 corners there have a native storage on tile 0 (with 3/12 at the
+        #    junction itself), so the two-cell coordinate fallback above already
+        #    resolved them to that native corner. They become NATIVE, degree-3/4
+        #    nodes spanning tiles [0,9] (and [0,3,9]/[0,9,12] at the junction) and
+        #    DO carry transport -- they are not part of `loose` (which is
+        #    identity-less only) and are handled once, via their native storage.
+        # The 65E (tiles 0/3) lip is native throughout and was merged exactly by
+        # `by_loc` above (e.g. one node with reps on both tile 0 and tile 3).
         loose = [
             (f, J, I)
             for f in range(nf) for J in range(nqy) for I in range(nqx)
