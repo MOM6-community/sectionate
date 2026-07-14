@@ -725,8 +725,8 @@ def infer_grid_path(i1, j1, i2, j2, gridlon, gridlat, neighbor_maps, f1=None, f2
             # closer to the endpoint, OR if it is a seam twin of the current point -- the
             # same physical location reached by a different index across a periodic or fold
             # seam. The twin is a valid zero-length step that does *not* reduce the distance,
-            # so a strict "closer than current" test admits it only by sub-ULP rounding luck
-            # (the bug that made paths flip across numpy/libm versions); admitting it
+            # so a strict "closer than current" test admits it only depending on floating-point
+            # rounding (the bug that made paths flip across numpy/libm versions); admitting it
             # explicitly by physical coincidence makes that deterministic, without admitting
             # genuinely-distinct near-equidistant neighbors (which would wander off a normal
             # path). Among the admitted neighbors take the one closest to the desired curve,

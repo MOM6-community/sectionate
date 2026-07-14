@@ -160,7 +160,7 @@ def cube_left_grid():
     """Native 'left'-staggered cubed-sphere grid carrying an exactly
     non-divergent transport field derived from a corner streamfunction:
     every velocity face's transport is the streamfunction difference between
-    its two corner endpoints, so cell convergence telescopes to zero and any
+    its two corner endpoints, so cell convergence sums to zero and any
     section's transport equals the endpoint streamfunction difference."""
     cxyz = _outer_corners_xyz()
     lon_o, lat_o = _lonlat(cxyz)
@@ -204,7 +204,8 @@ def test_cube_topology_is_complete_and_consistent():
     """Every cube corner resolves to a coherent node. A 'left'-staggered cube
     stores 6*Nc**2 corners for 6*Nc**2 + 2 physical points, so exactly two cube
     vertices live on no face: those become edge-less nodes (no native path
-    corner can exist there, so their junction edges are honest walls), their
+    corner can exist there, so their junction edges are genuine closed
+    boundaries (walls)), their
     six seam-neighbours lose that one edge, and the six stored vertices are
     ordinary 3-valent junction nodes -- crossable, unlike under the old
     junction-walling repair."""
@@ -231,11 +232,12 @@ def _coordinate_jittered_cube_left_grid(eps=2.0):
     `face_connections` are untouched).
 
     A point where three faces meet but that lives on no native face is stored
-    once per touching face as an identity-less "ghost" corner whose position each
-    face must *extrapolate*. On the exact gnomonic cube all three faces
+    once per touching face as a corner stored on no native face whose position
+    each face must *extrapolate*. On the exact gnomonic cube all three faces
     extrapolate the same coordinate, so they merge by pure geometric coincidence.
     A real curvilinear grid instead extrapolates three slightly disagreeing
-    positions -- the LLC90 tiles 2/6/10 "pinwheel" is the archetype -- and the
+    positions -- the LLC90 tiles 2/6/10 rotated three-tile corner junction is the
+    archetype -- and the
     coincidence merge fails. Shifting each face's corner coordinates rigidly by a
     fraction of a cell reproduces exactly that disagreement (the shift is well
     below half a cell, so genuine seam twins still coincide and the rest of the
@@ -262,25 +264,26 @@ def _coordinate_jittered_cube_left_grid(eps=2.0):
 
 def test_disagreeing_extrapolation_junction_merges_and_conserves():
     """Regression for MOM6-community/sectionate#49 (the LLC90 tiles 2/6/10
-    pinwheel). When the three faces meeting at a corner stored on no native face
-    extrapolate *disagreeing* ghost coordinates, the coordinate merges cannot see
-    that they are one physical point, so without the topological (surrounding-
-    cell) merge the junction splits into separate degree-0 nodes and the stored
-    radial velocity faces around it read as zero from every neighbour's frame --
-    leaking convergence into the junction cells.
+    rotated three-tile corner junction). When the three faces meeting at a corner
+    stored on no native face extrapolate *disagreeing* corner coordinates, the
+    coordinate merges cannot see that they are one physical point, so without the
+    topological (surrounding-cell) merge the junction splits into separate
+    degree-0 nodes and the stored radial velocity faces around it read as zero
+    from every neighbour's frame -- introducing a spurious convergence into the
+    junction cells.
 
     Here the exact cube's two un-stored vertices are turned into that failure
     mode by jittering each face's corner coordinates. The topological merge must
-    collapse each junction's three ghost slots back into a single node (so the
+    collapse each junction's three corner slots back into a single node (so the
     topology matches the un-jittered cube: exactly two non-native nodes, each the
     union of its three faces' slots) and the outer-padded transports must again
-    telescope to zero cell-by-cell for the streamfunction flow.
+    sum to zero cell-by-cell for the streamfunction flow.
     """
     grid, _ = _coordinate_jittered_cube_left_grid()
     ot = outer_topology(grid)
     assert (ot.node_id >= 0).all()
 
-    # (a) the disagreeing ghost slots collapse to one node per junction: exactly
+    # (a) the disagreeing corner slots collapse to one node per junction: exactly
     #     two non-native nodes (as on the exact cube), each merging three slots
     #     from three distinct faces -- not one split-off node per face.
     nonnative = np.where(ot.node_native[:, 0] < 0)[0]
@@ -290,14 +293,15 @@ def test_disagreeing_extrapolation_junction_merges_and_conserves():
         assert len(reps) == 3
         assert len({f for (f, _, _) in reps}) == 3
 
-    # (b) with the junction unified, convergence telescopes to zero everywhere
-    #     (before the fix it leaks O(1e-2) into the junction cells).
+    # (b) with the junction unified, convergence sums to zero everywhere
+    #     (before the fix it produces a spurious O(1e-2) convergence in the
+    #     junction cells).
     Uo, Vo = ot.padded_transports(grid._ds.u, grid._ds.v)
     conv = (Uo[:, :, :-1] - Uo[:, :, 1:]) + (Vo[:, :-1, :] - Vo[:, 1:, :])
     assert np.abs(conv).max() < 1e-12
 
 
-def test_cube_padded_transports_telescope_exactly():
+def test_cube_padded_transports_sum_to_zero_exactly():
     """Cell convergence from the outer-padded transports is exactly zero for a
     streamfunction flow, cell by cell -- including along every rotated seam and
     around the cube vertices."""
@@ -344,7 +348,7 @@ def test_cube_section_over_pole_has_stable_geometric_sign(lonlat, faces_expected
     flat (east, north) frame, which degenerates exactly at the pole: ``cos(lat) -> 0``
     shrinks the east component and longitude is ill-defined at the +Z face-center
     corner, which this cube stores right on ``lat = 90``. The pole-adjacent edges
-    carry real flux, so a sign that flipped there would break the telescoping
+    carry real flux, so a sign that flipped there would break the exact
     equality by a finite amount. The single-tile bipolar fold signs via
     ``Usign``/``Vsign`` instead, so this multi-tile cube (whose polar cap actually
     invokes ``_left_sign``) is where the concern must be pinned down.
@@ -369,7 +373,7 @@ def test_cube_section_over_pole_has_stable_geometric_sign(lonlat, faces_expected
     assert abs(float(conv.values[polest])) > 1e-6
 
     # ...and with every edge signed (the pole-adjacent ones included), the transport
-    # telescopes to the endpoint streamfunction difference -- so the pole sign is right.
+    # sums to the endpoint streamfunction difference -- so the pole sign is right.
     dpsi = (psi[int(f_c[-1]), int(j_c[-1]), int(i_c[-1])]
             - psi[int(f_c[0]), int(j_c[0]), int(i_c[0])])
     assert np.isclose(abs(float(conv.sum().values)), abs(float(dpsi)), rtol=1e-9)
@@ -470,7 +474,7 @@ def _cube_variant(rots, stagger="left", faces=None, fc=None):
     return grid, psi
 
 
-def test_cube_right_staggered_padded_transports_telescope():
+def test_cube_right_staggered_padded_transports_sum_to_zero():
     """Same closed cube but native 'right' (NE-corner) staggering: the low-edge
     fill path (`I==0`/`J==0`) must be exercised and convergence must still be
     exactly zero cell-by-cell for the streamfunction flow."""
@@ -485,9 +489,9 @@ def test_cube_right_staggered_padded_transports_telescope():
 def test_open_wall_padded_transports_zeroes_walls_and_reads_seam_twin():
     """An OPEN two-face grid (one shared seam, walls elsewhere) exercises the
     edge-stored-on-no-face path that is otherwise only hit by real LLC90 data:
-    every wall halo slot must be exactly 0 (a wall carries no transport, never a
-    fabricated value), while the shared-seam halo slot must read the neighbour's
-    *stored* twin velocity."""
+    every wall halo slot must be exactly 0 (a wall carries no transport, not a
+    spurious nonzero value), while the shared-seam halo slot must read the
+    neighbour's *stored* twin velocity."""
     rots = _find_all_low_high_rotations()
     full_fc = _derive_face_connections(_outer_corners_xyz())["face"]
     # Deterministically pick a face whose Y-high edge glues, aligned and
@@ -523,7 +527,7 @@ def test_open_wall_padded_transports_zeroes_walls_and_reads_seam_twin():
 def test_same_side_reverse_gluing_raises():
     """A same-side (`reverse=True`) gluing leaves a whole seam line of corners
     stored on no face (degenerate on a staggered grid); `outer_topology` must
-    fail loudly rather than fabricate a topology."""
+    raise an error rather than return an invalid topology."""
     import itertools
 
     def has_same_side_gluing(rots):
