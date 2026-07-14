@@ -301,6 +301,47 @@ def test_disagreeing_extrapolation_junction_merges_and_conserves():
     assert np.abs(conv).max() < 1e-12
 
 
+def test_cube_corner_resolution_is_coordinate_jitter_independent():
+    """Corner identity is resolved from tracer-cell fingerprints, not coordinates:
+    the topological diagonal recovery and the 3-cell junction match place every
+    seam and cube-vertex corner combinatorially. So a rigid per-face coordinate
+    jitter -- which shifts each face's every corner away from its true position and
+    would defeat a nearest-native-corner snap of the cross-face stored vertices --
+    must leave the resolved NATIVE corner topology and the (streamfunction)
+    transports exactly unchanged.
+
+    The jitter here (eps=2.0 deg, well above 0.35 of the ~0.2-1 deg local corner
+    spacing near the vertices) exceeds the snap-acceptance band, so a purely
+    coordinate-based resolution would mis-place the cross-face vertex slots."""
+    grid0, _ = cube_left_grid()
+    ot0 = outer_topology(grid0)
+
+    def native_nodes(ot):
+        return set(tuple(int(x) for x in r) for r in ot.node_native if r[0] >= 0)
+
+    def native_edges(ot):
+        key = {i: tuple(int(x) for x in ot.node_native[i])
+               for i in range(len(ot.node_native))}
+        E = set()
+        for i, nbrs in enumerate(ot.node_adj):
+            for j in nbrs:
+                if ot.node_native[i][0] >= 0 and ot.node_native[j][0] >= 0:
+                    E.add(frozenset((key[i], key[j])))
+        return E
+
+    grid, _ = _coordinate_jittered_cube_left_grid(eps=2.0)
+    ot = outer_topology(grid)
+
+    # native corner topology (the part that carries transports) is unchanged
+    assert native_nodes(ot) == native_nodes(ot0)
+    assert native_edges(ot) == native_edges(ot0)
+
+    # and the streamfunction flow is still exactly non-divergent cell-by-cell
+    Uo, Vo = ot.padded_transports(grid._ds.u, grid._ds.v)
+    conv = (Uo[:, :, :-1] - Uo[:, :, 1:]) + (Vo[:, :-1, :] - Vo[:, 1:, :])
+    assert np.abs(conv).max() < 1e-12
+
+
 def test_cube_padded_transports_sum_to_zero_exactly():
     """Cell convergence from the outer-padded transports is exactly zero for a
     streamfunction flow, cell by cell -- including along every rotated seam and

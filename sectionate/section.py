@@ -901,12 +901,24 @@ def spherical_angle(lonA, latA, lonB, latB, lonC, latC):
     --------
 
     angle : float
-        Spherical absolute value of triangle angle alpha, in radians.
+        Spherical absolute value of triangle angle alpha, in radians. Returns 0 when B or
+        C coincides with the vertex A (a degenerate, zero-length arc).
     """
     a = distance_on_unit_sphere(lonB, latB, lonC, latC, R=1.)
     b = distance_on_unit_sphere(lonC, latC, lonA, latA, R=1.)
     c = distance_on_unit_sphere(lonA, latA, lonB, latB, R=1.)
-        
+
+    # The spherical law of cosines divides by sin(b)*sin(c), where b is the arc A->C and
+    # c is the arc A->B. When b == 0 (C coincides with the vertex A) or c == 0 (B coincides
+    # with A), one arc is degenerate and the ratio is 0/0 -> NaN. The limiting angle is 0:
+    # a point sitting on the vertex A lies on the arc, so its angular deviation is zero.
+    # This arises in the walk's `deviation` metric when a candidate corner lands exactly on
+    # a section endpoint (e.g. approaching the bipolar-fold seam); returning 0 avoids a
+    # spurious divide-by-zero warning without changing any selection (such a candidate is
+    # already handled by the endpoint-coincidence step / progress test).
+    if b == 0. or c == 0.:
+        return 0.
+
     return np.arccos(np.clip((np.cos(a) - np.cos(b)*np.cos(c))/(np.sin(b)*np.sin(c)), -1., 1.))
 
 def align_coords(coords1, coords2, extend=False):
