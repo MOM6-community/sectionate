@@ -40,16 +40,12 @@ jobs:
       - name: Set up conda environment
         run: |
           mamba env update -f ci/environment.yml
+          # The topology-driven multi-tile section/transport and bipolar north-fold
+          # tests need xgcm >= 0.10.1, which introduces the fold boundary
+          # (padding={"Y": {"fold": ...}}, formerly xgcm#711), the face_connections
+          # halo-padding fix (xgcm#712), and the other_component vector-pad fix
+          # (xgcm#749). It is a plain PyPI dependency, pulled in by `pip install -e .`.
           python -m pip install -e .
-          # The topology-driven multi-tile section/transport tests need the
-          # unreleased xgcm v1.0.0 line, which folds in the face_connections
-          # halo-padding fix (xgcm#712, carried by the bipolar north-fold xgcm#711)
-          # and the bare-DataArray other_component vector-pad fix (xgcm#749) for
-          # correct vector diff/interp across rotated/reversed seams. Installed
-          # LAST with --force-reinstall --no-deps: setuptools_scm reports a dev
-          # version below the xgcm>=0.9.0 floor, so a plain `pip install -e .`
-          # pulls a PyPI xgcm that would otherwise clobber this branch.
-          python -m pip install --force-reinstall --no-deps "xgcm @ git+https://github.com/hdrake/xgcm.git@dev-v1.0.0"
       - name: Conda list information
         run: |
           conda env list

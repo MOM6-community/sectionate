@@ -5,7 +5,7 @@ Requirements
 ^^^^^^^^^^^^
 
 sectionate is compatible with python 3 (>= version 3.11). It requires xgcm
-(>= version 0.9.0).
+(>= version 0.10.1).
 
 Installation from Conda Forge
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
