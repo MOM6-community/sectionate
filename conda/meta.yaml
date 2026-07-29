@@ -20,6 +20,11 @@ requirements:
     - python {{ python_min }}
     - pip
     - hatchling
+    # The build backend resolves the version through hatch-vcs. The build above
+    # is `--no-build-isolation`, so it has to be installed here or the wheel
+    # build fails outright; the sdist carries the generated `_version.py`, so
+    # git itself is not needed.
+    - hatch-vcs
   run:
     - python >={{ python_min }}
     - dask
