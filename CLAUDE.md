@@ -8,24 +8,47 @@ Sectionate is a Python package for sampling grid-consistent hydrographic section
 
 ## Development Setup
 
+**One conda environment per branch/worktree, named `docs_env_sectionate_<branch-or-worktree-name>`.**
+Branches diverge in their dependencies — the xgcm floor in particular — so a single
+shared environment silently tests the wrong versions. Create it from
+`docs/environment.yml`, overriding the baked-in `name:` with `-n`:
+
 ```bash
-conda env create -f ci/environment.yml
-conda activate test_env_sectionate
-pip install -e .
+ENV="docs_env_sectionate_$(git rev-parse --abbrev-ref HEAD)"
+conda env create -f docs/environment.yml -n "$ENV"
+conda activate "$ENV"
+pip install -e .    # resolves the branch's own runtime deps from pyproject.toml
+python -m ipykernel install --user --name "$ENV" --display-name "$ENV"
 ```
 
-**Local development environment:** use the `docs_env_sectionate` conda env
-(`~/anaconda3/envs/docs_env_sectionate`) for developing this package — running the
-test suite, executing the example notebooks, and any package work in this workspace.
-Keep it updated as needed; in particular it must carry **xgcm >= 0.10.1**, which
+`docs/environment.yml` pins none of the runtime dependencies; `pip install -e .` is
+what resolves them, so install in that order and re-run it after any dependency
+change in `pyproject.toml`. Reuse the env across runs on the same branch; remove it
+with `conda env remove -n "$ENV"` once the branch or worktree is gone.
+(`ci/environment.yml` is the minimal CI environment — pytest only, no plotting or
+notebook stack. It is not sufficient for the notebooks.)
+
+The environment must carry **xgcm >= 0.10.1**, which
 introduces the bipolar north fold (`padding={"Y": {"fold": ...}}`, formerly #711),
 the face-connection padding fix (#712), and the bare-`DataArray` `other_component`
 vector-pad fix (#749). It is a plain PyPI release, so `pip install -e .` pulls it in
 automatically (sectionate requires `xgcm>=0.10.1`). The ECCO example (notebook 5)
 pulls its data subset from Zenodo (concept DOI `10.5281/zenodo.21051424`) via stdlib
-`urllib` with MD5 checks — no `earthaccess`/Earthdata login needed. A correctly set up
-env runs the full suite with **0 skips** (fold and multi-tile tests require this xgcm;
-they `skip` on `xgcm < 0.10.1`).
+`urllib` with MD5 checks — no `earthaccess`/Earthdata login needed.
+
+A correctly set up environment runs the full suite with **0 skips**. Skips mean one of
+two things: fold and multi-tile tests `skip` on `xgcm < 0.10.1`, and the ECCO LLC90 and
+MOM6-fold tests `skip` when their example data is absent from `data/`. In a fresh
+worktree the latter is the usual cause — `data/` holds ~1.4 GB of downloaded input that
+each checkout otherwise re-fetches. Symlink it from a checkout that already has it
+rather than downloading again (`data/*.nc` is gitignored, but `MOM5_global_example_grid.nc`
+is tracked, so link the individual files, not the directory):
+
+```bash
+cd data && for f in /path/to/other/checkout/data/*.nc; do
+  b=$(basename "$f"); [ -e "$b" ] || ln -s "$f" "$b"
+done
+```
 
 ## Commands
 
@@ -33,13 +56,28 @@ they `skip` on `xgcm < 0.10.1`).
 - **Run a single test:** `pytest sectionate/tests/test_section.py::test_find_closest_grid_point`
 - **Build docs:** `cd docs && make html` (requires `docs/environment.yml` environment)
 
-## Definition of Done (always, before committing)
+## Definition of Done (always, before committing or pushing)
 
-Before committing any change to this repository, always do all of the following — use
-parallel agents where it is faster:
+Before committing **or pushing** any change to this repository, always do all of the
+following — use parallel agents where it is faster. Both of the first two steps, every
+time: not one or the other, and not only the notebooks that look related to the change.
+A change that passes `pytest` but breaks a notebook is still a broken change, because
+the notebooks are the rendered documentation.
 
-1. **Run the full test suite** (`pytest`) and confirm it passes.
-2. **Re-execute the example notebooks** in `examples/` and confirm they run cleanly.
+Run them in this branch's own `docs_env_sectionate_<branch-or-worktree-name>` environment
+(see *Development Setup*), not in whatever env happens to be active.
+
+1. **Run the full test suite** (`pytest`) and confirm it passes with **0 skips**.
+2. **Re-execute the example notebooks** in `examples/` and confirm they run cleanly:
+   ```bash
+   cd examples && jupyter nbconvert --to notebook --execute --inplace \
+     --ExecutePreprocessor.timeout=1800 \
+     --ExecutePreprocessor.kernel_name=python3 *.ipynb
+   ```
+   Run from `examples/` — the notebooks resolve data paths relative to it. `--inplace`
+   refreshes the committed outputs, which is intended; review the resulting diff.
+   `kernel_name=python3` uses the active env's kernel, so the per-branch env name need
+   not match the `kernelspec` recorded in each notebook.
 3. **Scan the repo for inconsistencies / outdated information** introduced by the change —
    including docstrings, `README.md`, files under `docs/`, the example notebooks, and this
    `CLAUDE.md` — and update them so docs and code stay in sync.
@@ -103,4 +141,11 @@ The package is organized around a pipeline: define sections → map to grid → 
 
 ## Version
 
-Version is in `sectionate/version.py` and read by hatchling at build time.
+**The git tag is the version.** There is no version string checked into the tree:
+`hatch-vcs` derives it from the tag at build time and writes the gitignored
+`sectionate/_version.py`, which ships inside the sdist and wheel. `sectionate/version.py`
+is only a shim over that generated file — never add a version literal back to it. A
+`0.0.0+unknown` from it means the package was imported without being built or installed,
+not that a number is missing. Any checkout that installs the package needs its tags: a
+shallow clone resolves a `.devN` version instead of the release line, which is why CI and
+Read the Docs both fetch with full depth. See the Releasing section of `README.md`.
