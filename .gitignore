@@ -109,3 +109,6 @@ data/*.nc
 # Build artifacts and OS cruft
 *.tar.gz
 .DS_Store
+
+# Version file generated from the git tag by hatch-vcs at build time.
+sectionate/_version.py
