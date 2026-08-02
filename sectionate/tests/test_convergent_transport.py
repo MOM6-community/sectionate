@@ -278,7 +278,73 @@ def test_layer_interface_from_grid_axis_without_naming_convention():
     ("z_l", "z_l"),       # the layer coordinate passed twice
 ])
 def test_inconsistent_layer_interface_rejected(layer, interface):
-    """Genuinely mismatched pairs are still rejected, and the message names them."""
-    grid = initialize_minimal_vertical_grid("z_l", "z_i", register_z=True)
+    """Genuinely mismatched pairs are still rejected, and the message names them. The
+    grid registers no vertical axis here, so the names are all there is to go on; a
+    grid that *does* register one rejects a contradicting name earlier and more
+    specifically (see `test_layer_interface_contradicting_z_axis_raises`)."""
+    grid = initialize_minimal_vertical_grid("z_l", "z_i", register_z=False)
     with pytest.raises(ValueError, match="do not describe the same vertical axis"):
         transport_around_minimal_cell(grid, layer, interface)
+
+
+# ---------------------------------------------------------------------------
+# layer/interface are taken from the grid's vertical axis when it has one
+# ---------------------------------------------------------------------------
+
+def test_layer_interface_derived_from_grid_z_axis():
+    """A grid that registers a "Z" axis already names its vertical coordinates, so the
+    caller should not have to repeat them."""
+    grid = initialize_minimal_vertical_grid("sigma2_l", "sigma2_i", register_z=True)
+    dsout = transport_around_minimal_cell(grid, None, None)  # nothing passed
+    assert "sigma2_l" in dsout.coords
+    assert "sigma2_i" in dsout.coords
+    conv = dsout['conv_mass_transport'].sum().values
+    assert np.isclose(1. + 0. + np.sqrt(2.) - np.pi, conv, rtol=1.e-14)
+
+
+def test_layer_interface_derived_matches_explicitly_passed():
+    """Passing the same names the "Z" axis carries -- what a caller that read them off
+    `grid.axes["Z"].coords` does -- is equivalent to passing nothing."""
+    grid = initialize_minimal_vertical_grid("lam_l", "lam_i", register_z=True)
+    zc = grid.axes["Z"].coords["center"]
+    zi = grid.axes["Z"].coords["outer"]
+    explicit = transport_around_minimal_cell(grid, zc, zi)
+    derived = transport_around_minimal_cell(grid, None, None)
+    xr.testing.assert_identical(explicit, derived)
+
+
+@pytest.mark.parametrize("layer,interface", [
+    ("z_l", None),        # layer contradicts the axis
+    (None, "z_i"),        # interface contradicts the axis
+    ("z_l", "z_i"),       # both do
+])
+def test_layer_interface_contradicting_z_axis_raises(layer, interface):
+    """An explicit name that disagrees with the grid's own vertical axis is an error,
+    not an override: the output would be labelled with a coordinate that need not
+    describe the data."""
+    grid = initialize_minimal_vertical_grid("sigma2_l", "sigma2_i", register_z=True)
+    with pytest.raises(ValueError, match="contradicts the grid"):
+        transport_around_minimal_cell(grid, layer, interface)
+
+
+def test_no_vertical_axis_and_no_names_attaches_nothing():
+    """Without a "Z" axis and without explicit names there is no vertical coordinate to
+    attach -- and, unlike the old `layer="z_l"` default, no lookup of a name the grid
+    has never heard of."""
+    grid = initialize_minimal_outer_grid()
+    grid._ds['u'] = xr.DataArray(np.array([[1., -np.sqrt(2.)]]), dims=("yh", "xq",))
+    grid._ds['v'] = xr.DataArray(np.array([[0], [np.pi]]), dims=("yq", "xh",))
+    dsout = transport_around_minimal_cell(grid, None, None)
+    assert not any(c.endswith(("_l", "_i")) for c in dsout.coords)
+    conv = dsout['conv_mass_transport'].sum().values
+    assert np.isclose(1. + 0. + np.sqrt(2.) - np.pi, conv, rtol=1.e-14)
+
+
+def test_z_axis_center_without_coordinate_values_is_not_derived():
+    """A "Z" axis position may name a bare dimension carrying no coordinate values;
+    such a name cannot be attached to the output, so it is not derived."""
+    grid = initialize_minimal_vertical_grid("z_l", "z_i", register_z=True)
+    grid._ds = grid._ds.drop_vars("z_i")  # keep the dim, drop its values
+    dsout = transport_around_minimal_cell(grid, None, None)
+    assert "z_l" in dsout.coords
+    assert "z_i" not in dsout.coords
