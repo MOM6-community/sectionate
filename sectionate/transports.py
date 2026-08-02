@@ -382,6 +382,64 @@ def uvcoords_from_qindices(grid, i_c, j_c, f_c=None):
         uvindices_from_qindices(grid, i_c, j_c, f_c=f_c),
     )
 
+# xgcm positions at which a vertical *interface* (cell-edge) coordinate can sit,
+# as opposed to the "center" position where the paired layer coordinate sits.
+_INTERFACE_POSITIONS = ("outer", "inner", "left", "right")
+
+
+def _layer_interface_axis(grid, layer, interface):
+    """Name of the `grid` axis that registers `layer` at its "center" position and
+    `interface` at one of its interface positions, or None if no single axis does."""
+    for name, axis in grid.axes.items():
+        coords = axis.coords
+        if coords.get("center") != layer:
+            continue
+        if any(coords.get(pos) == interface for pos in _INTERFACE_POSITIONS):
+            return name
+    return None
+
+
+def _suffix_paired(layer, interface):
+    """Whether `layer`/`interface` follow the `<stem>l`/`<stem>i` naming convention
+    (e.g. "z_l"/"z_i", "sigma2_l"/"sigma2_i"), anchored at the *end* of the name."""
+    return (
+        layer.endswith("l")
+        and interface.endswith("i")
+        and layer[:-1] == interface[:-1]
+    )
+
+
+def _validate_layer_interface(grid, layer, interface):
+    """Raise unless `layer` and `interface` describe the same vertical axis.
+
+    The grid already knows the answer, so ask it: accept the pair if any axis of
+    `grid` registers `layer` at its "center" position and `interface` at an
+    interface position. Grids handed to sectionate frequently declare only their
+    horizontal axes, though (the vertical one is never traced over), so a pair the
+    grid says nothing about falls back to the `<stem>l`/`<stem>i` naming convention.
+
+    Note this is a suffix-anchored fallback, not a whole-string substitution: the
+    latter rewrites every "l" in the name and so rejects perfectly consistent pairs
+    whose stem happens to contain one (e.g. "lam_l"/"lam_i").
+    """
+    if _layer_interface_axis(grid, layer, interface) is not None:
+        return
+    if _suffix_paired(layer, interface):
+        return
+    offered = ", ".join(
+        f"{name}={dict(axis.coords)}" for name, axis in grid.axes.items()
+    ) or "none"
+    raise ValueError(
+        f"Inconsistent layer and interface grid variables: layer={layer!r} and "
+        f"interface={interface!r} do not describe the same vertical axis. No axis "
+        f"of the grid registers {layer!r} at its 'center' position together with "
+        f"{interface!r} at an interface position "
+        f"({'/'.join(_INTERFACE_POSITIONS)}), and the two names do not follow the "
+        f"'<stem>l'/'<stem>i' convention (e.g. 'z_l'/'z_i') either. "
+        f"Grid axes: {offered}."
+    )
+
+
 def convergent_transport(
     grid,
     i_c,
@@ -422,8 +480,12 @@ def convergent_transport(
     layer : str or None
         Name of the vertical layer (cell-center) coordinate, or None for grids without one.
     interface : str or None
-        Name of the vertical interface coordinate, or None. If both are given, they must be
-        consistent (`layer` is `interface` with "l" in place of "i").
+        Name of the vertical interface coordinate, or None. If both are given, they must
+        describe the same vertical axis: either the grid registers `layer` at the "center"
+        position of one of its axes and `interface` at an interface position of that same
+        axis ("outer"/"inner"/"left"/"right"), or — for grids that do not declare their
+        vertical axis at all — the names follow the `<stem>l`/`<stem>i` convention
+        (e.g. "z_l"/"z_i", "sigma2_l"/"sigma2_i").
     outname : str
         Name of output xr.DataArray variable. Default: "conv_mass_transport".
     sect_coord: str
@@ -455,8 +517,7 @@ def convergent_transport(
     """
     
     if (layer is not None) and (interface is not None):
-        if layer.replace("l", "i") != interface:
-            raise ValueError("Inconsistent layer and interface grid variables!")
+        _validate_layer_interface(grid, layer, interface)
             
     # On a multi-tile grid the contributing velocity face varies along the section
     # (`uvindices["face"]`); it is selected pointwise in every `.isel` below.

@@ -183,3 +183,102 @@ def test_convergent_transport_convention():
     )['conv_mass_transport'].sum().values
     
     assert np.equal(-3., conv) and np.equal(-3, conv_rev)
+
+
+def initialize_minimal_vertical_grid(layer, interface, register_z=True):
+    """The minimal 1x1-cell 'outer' grid of `initialize_minimal_outer_grid`, plus a
+    single-layer vertical coordinate named (`layer`, `interface`). `register_z` selects
+    whether the grid declares that vertical axis or (as most grids handed to sectionate
+    do, since sections are only ever traced horizontally) only its horizontal ones."""
+    xh, yh = np.array([0.5]), np.array([0.5])
+    xq, yq = np.array([0., 1.]), np.array([0., 1.])
+
+    lon, lat = np.meshgrid(xh, yh)
+    lon_c, lat_c = np.meshgrid(xq, yq)
+    ds = xr.Dataset({}, coords={
+        "xh": xr.DataArray(xh, dims=("xh",)),
+        "yh": xr.DataArray(yh, dims=("yh",)),
+        "xq": xr.DataArray(xq, dims=("xq",)),
+        "yq": xr.DataArray(yq, dims=("yq",)),
+        layer: xr.DataArray(np.array([0.5]), dims=(layer,)),
+        interface: xr.DataArray(np.array([0., 1.]), dims=(interface,)),
+        "geolon": xr.DataArray(lon, dims=("yh", "xh")),
+        "geolat": xr.DataArray(lat, dims=("yh", "xh")),
+        "geolon_c": xr.DataArray(lon_c, dims=("yq", "xq",)),
+        "geolat_c": xr.DataArray(lat_c, dims=("yq", "xq",)),
+    })
+    ds["u"] = xr.DataArray(np.array([[[1., -np.sqrt(2.)]]]), dims=(layer, "yh", "xq"))
+    ds["v"] = xr.DataArray(np.array([[[0.], [np.pi]]]), dims=(layer, "yq", "xh"))
+    coords = {
+        'X': {'outer': 'xq', 'center': 'xh'},
+        'Y': {'outer': 'yq', 'center': 'yh'},
+    }
+    if register_z:
+        coords['Z'] = {'center': layer, 'outer': interface}
+    return xgcm.Grid(ds, coords=coords, padding={'X': "extend", 'Y': "extend"},
+                     autoparse_metadata=False)
+
+
+# The closed path of vorticity points around the single cell of the minimal grid,
+# i.e. what `grid_section` returns for the square [0,1]x[0,1] (see
+# `test_convergent_transport`); hardcoded so these tests exercise only
+# `convergent_transport`'s layer/interface handling.
+MINIMAL_LOOP_I = np.array([0, 1, 1, 0, 0])
+MINIMAL_LOOP_J = np.array([0, 0, 1, 1, 0])
+
+
+def transport_around_minimal_cell(grid, layer, interface):
+    from sectionate.transports import convergent_transport
+    return convergent_transport(
+        grid,
+        MINIMAL_LOOP_I,
+        MINIMAL_LOOP_J,
+        utr="u",
+        vtr="v",
+        layer=layer,
+        interface=interface,
+        geometry="cartesian",
+    )
+
+
+@pytest.mark.parametrize("register_z", [True, False])
+@pytest.mark.parametrize("layer,interface", [
+    ("z_l", "z_i"),           # the canonical MOM6 depth coordinate
+    ("sigma2_l", "sigma2_i"),  # a stem with no "l" in it
+    ("lam_l", "lam_i"),        # a stem containing an "l" ...
+    ("level_l", "level_i"),    # ... and one containing two
+])
+def test_layer_interface_pairs_accepted(layer, interface, register_z):
+    """A consistent (layer, interface) pair must be accepted whatever its stem spells.
+    Matching them by rewriting every "l" in `layer` into an "i" spuriously rejected any
+    stem that itself contains an "l"."""
+    grid = initialize_minimal_vertical_grid(layer, interface, register_z=register_z)
+    dsout = transport_around_minimal_cell(grid, layer, interface)
+
+    # both vertical coordinates are carried through to the output ...
+    assert layer in dsout.coords
+    assert interface in dsout.coords
+    # ... and the transport is the depth-independent result of `test_convergent_transport`
+    conv = dsout['conv_mass_transport'].sum().values
+    assert np.isclose(1. + 0. + np.sqrt(2.) - np.pi, conv, rtol=1.e-14)
+
+
+def test_layer_interface_from_grid_axis_without_naming_convention():
+    """Names the grid itself pairs on one axis are accepted even when they follow no
+    "_l"/"_i" naming convention: the grid, not the spelling, is the authority."""
+    grid = initialize_minimal_vertical_grid("MyCenters", "MyEdges", register_z=True)
+    dsout = transport_around_minimal_cell(grid, "MyCenters", "MyEdges")
+    assert "MyCenters" in dsout.coords and "MyEdges" in dsout.coords
+
+
+@pytest.mark.parametrize("layer,interface", [
+    ("z_l", "sigma2_i"),  # two different vertical coordinates
+    ("ml_l", "mi_i"),     # different stems ("ml" vs "mi"), but a whole-string
+                          # "l"->"i" substitution would have accepted them
+    ("z_l", "z_l"),       # the layer coordinate passed twice
+])
+def test_inconsistent_layer_interface_rejected(layer, interface):
+    """Genuinely mismatched pairs are still rejected, and the message names them."""
+    grid = initialize_minimal_vertical_grid("z_l", "z_i", register_z=True)
+    with pytest.raises(ValueError, match="do not describe the same vertical axis"):
+        transport_around_minimal_cell(grid, layer, interface)
