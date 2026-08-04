@@ -16,25 +16,61 @@ ds["lon"] = xr.DataArray(lon, dims=("y", "x"))
 ds["lat"] = xr.DataArray(lat, dims=("y", "x"))
 
 
-def _latlon_neighbor_maps():
-    """Neighbor maps for the lat-lon grid above (X-periodic, Y clipped), built the
-    same way `grid_section` does -- from an xgcm.Grid. The low-level pathfinder always
-    requires these; a grid is the only source of topology-aware connectivity."""
+def _latlon_grid(vertical_axis=False):
+    """The lat-lon grid above (X-periodic, Y clipped), optionally also registering a
+    vertical axis -- as every real model grid does, and as sections never traverse."""
     ny, nx = lat.shape
-    g = xgcm.Grid(
-        xr.Dataset(coords={
-            "xq": np.arange(nx), "yq": np.arange(ny),
-            "xh": np.arange(nx) + 0.5, "yh": np.arange(ny) + 0.5,
-            "geolon_c": (("yq", "xq"), lon.astype(float)),
-            "geolat_c": (("yq", "xq"), lat.astype(float)),
-            "geolon": (("yh", "xh"), lon.astype(float)),
-            "geolat": (("yh", "xh"), lat.astype(float)),
-        }),
-        coords={"X": {"center": "xh", "right": "xq"}, "Y": {"center": "yh", "right": "yq"}},
-        padding={"X": "periodic", "Y": "extend"},
-        autoparse_metadata=False,
-    )
+    ds = xr.Dataset(coords={
+        "xq": np.arange(nx), "yq": np.arange(ny),
+        "xh": np.arange(nx) + 0.5, "yh": np.arange(ny) + 0.5,
+        "geolon_c": (("yq", "xq"), lon.astype(float)),
+        "geolat_c": (("yq", "xq"), lat.astype(float)),
+        "geolon": (("yh", "xh"), lon.astype(float)),
+        "geolat": (("yh", "xh"), lat.astype(float)),
+    })
+    coords = {"X": {"center": "xh", "right": "xq"}, "Y": {"center": "yh", "right": "yq"}}
+    if vertical_axis:
+        ds = ds.assign_coords({"z_l": ("z_l", np.array([5., 15.])),
+                               "z_i": ("z_i", np.array([0., 10., 20.]))})
+        coords["Z"] = {"center": "z_l", "outer": "z_i"}
+    return xgcm.Grid(ds, coords=coords, padding={"X": "periodic", "Y": "extend"},
+                     autoparse_metadata=False)
+
+
+def _latlon_neighbor_maps(vertical_axis=False):
+    """Neighbor maps for the lat-lon grid above, built the same way `grid_section`
+    does -- from an xgcm.Grid. The low-level pathfinder always requires these; a grid
+    is the only source of topology-aware connectivity."""
+    g = _latlon_grid(vertical_axis=vertical_axis)
     return build_neighbor_maps(g, get_geo_corners(g))
+
+
+def test_vertical_axis_does_not_affect_neighbor_maps():
+    """Horizontal connectivity must not depend on whether the grid also registers a
+    vertical axis. `build_neighbor_maps` padded its index arrays over *every* axis of
+    the grid, and xgcm's `pad` raises on an axis the array has no dimension for, so a
+    Z axis made an otherwise ordinary grid untraceable."""
+    plain = _latlon_neighbor_maps()
+    with_z = _latlon_neighbor_maps(vertical_axis=True)
+    assert set(plain) == set(with_z)
+    for d in plain:
+        for a, b in zip(plain[d], with_z[d]):
+            if a is None or b is None:
+                assert a is None and b is None
+            else:
+                np.testing.assert_array_equal(a, b)
+
+
+def test_grid_section_on_grid_with_vertical_axis():
+    """End-to-end: a section traced on a grid registering X, Y and Z is identical to
+    the same section traced on the horizontal-only view of that grid."""
+    from sectionate.section import grid_section
+    lons, lats = [10., 40.], [-10., 20.]
+    plain = grid_section(_latlon_grid(), lons, lats)
+    with_z = grid_section(_latlon_grid(vertical_axis=True), lons, lats)
+    for a, b in zip(plain, with_z):
+        np.testing.assert_array_equal(a, b)
+
 
 def test_distance_on_unit_sphere():
     from sectionate.section import distance_on_unit_sphere

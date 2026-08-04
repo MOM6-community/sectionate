@@ -20,6 +20,36 @@ def get_facedim(grid):
     return getattr(grid, "_facedim", None)
 
 
+def _pad_axes(grid, dims):
+    """
+    Names of the `grid` axes that `dims` spans.
+
+    `xgcm.padding.pad` iterates the whole `padding_width` mapping it is given and
+    looks each axis' position up in the array being padded, so an axis the array
+    has no dimension for is an error rather than a no-op. The arrays padded in
+    this module are the horizontal corner/center index arrays built a few lines
+    above each call, so passing `grid.axes` wholesale makes them fail on any grid
+    that registers a vertical axis -- which every real model grid does. Deriving
+    the list from the array's own dims keeps padding independent of whatever
+    *other* axes the grid happens to carry.
+
+    Parameters
+    ----------
+    grid: xgcm.Grid
+    dims: iterable of str
+        Dimension names of the array about to be padded.
+
+    Returns
+    -------
+    list of str
+    """
+    dims = set(dims)
+    return [
+        name for name, axis in grid.axes.items()
+        if dims & set(axis.coords.values())
+    ]
+
+
 def corner_position(grid):
     """
     Return the C-grid vorticity ("corner") position shared by the X and Y axes:
@@ -248,8 +278,9 @@ def build_neighbor_maps(grid, geocorners):
     own_j = np.broadcast_to(np.arange(ny)[:, None], shape)
     own_i = np.broadcast_to(np.arange(nx), shape)
 
-    padding = {ax: grid.axes[ax].padding for ax in grid.axes}
-    padding_width = {ax: (1, 1) for ax in grid.axes}
+    axes = _pad_axes(grid, dims)
+    padding = {ax: grid.axes[ax].padding for ax in axes}
+    padding_width = {ax: (1, 1) for ax in axes}
 
     def pad(a):
         return _module_pad(a, grid, padding_width, padding=padding, fill_value=np.nan)
@@ -302,8 +333,9 @@ def _multitile_padded_maps(grid, geocorners):
     own_j = np.broadcast_to(np.arange(ny)[:, None], shape)
     own_i = np.broadcast_to(np.arange(nx), shape)
 
-    padding = {ax: grid.axes[ax].padding for ax in grid.axes}
-    padding_width = {ax: (1, 1) for ax in grid.axes}
+    axes = _pad_axes(grid, dims)
+    padding = {ax: grid.axes[ax].padding for ax in axes}
+    padding_width = {ax: (1, 1) for ax in axes}
 
     def pad(a):
         return _module_pad(a, grid, padding_width, padding=padding, fill_value=np.nan)
@@ -531,12 +563,13 @@ class _OuterTopology:
         # topology; every non-seam boundary pads NaN so walls stay walls ---
         def _seam_or_fill(b):
             return b if b == "periodic" else "fill"
-        padding = {ax: _seam_or_fill(grid.axes[ax].padding) for ax in grid.axes}
         cid = xr.DataArray(
             np.arange(nf * Nyc * Nxc, dtype=float).reshape(nf, Nyc, Nxc),
             dims=(facedim, Yc, Xc),
         )
-        bw = {ax: (1, 1) for ax in grid.axes}
+        axes = _pad_axes(grid, cid.dims)
+        padding = {ax: _seam_or_fill(grid.axes[ax].padding) for ax in axes}
+        bw = {ax: (1, 1) for ax in axes}
         C = _module_pad(cid, grid, bw, padding=padding, fill_value=np.nan)
         C = C.transpose(facedim, ..., Yc, Xc).values  # (nf, Nyc+2, Nxc+2)
         # A diagonally-padded halo cell is a pad of a pad: across two seams it
@@ -560,11 +593,11 @@ class _OuterTopology:
         # left NaN and is resolved later by the 3-cell junction match (if it has a
         # native storage) or falls through to the coordinate-free `by_junction`.
         GX = _module_pad(
-            cid, grid, {ax: (1, 1) if ax == "X" else (0, 0) for ax in grid.axes},
+            cid, grid, {ax: (1, 1) if ax == "X" else (0, 0) for ax in axes},
             padding=padding, fill_value=np.nan,
         ).transpose(facedim, ..., Yc, Xc).values           # (nf, Nyc, Nxc+2)
         GY = _module_pad(
-            cid, grid, {ax: (1, 1) if ax == "Y" else (0, 0) for ax in grid.axes},
+            cid, grid, {ax: (1, 1) if ax == "Y" else (0, 0) for ax in axes},
             padding=padding, fill_value=np.nan,
         ).transpose(facedim, ..., Yc, Xc).values           # (nf, Nyc+2, Nxc)
 
