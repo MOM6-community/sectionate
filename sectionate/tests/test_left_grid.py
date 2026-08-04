@@ -164,10 +164,10 @@ def test_left_transport_matches_outer():
     assert np.array_equal(io, il) and np.array_equal(jo, jl)
 
     conv_o = convergent_transport(
-        outer, io, jo, utr="u", vtr="v", layer=None, geometry="cartesian"
+        outer, io, jo, utr="u", vtr="v", geometry="cartesian"
     )["conv_mass_transport"].sum().values
     conv_l = convergent_transport(
-        left, il, jl, utr="u", vtr="v", layer=None, geometry="cartesian"
+        left, il, jl, utr="u", vtr="v", geometry="cartesian"
     )["conv_mass_transport"].sum().values
     assert np.isclose(conv_o, conv_l, rtol=1e-12)
 
@@ -192,18 +192,18 @@ def test_left_multitile_mask_orientation():
 
     i, j, *_ = grid_section(single, lonseg, latseg)
     geom = convergent_transport(
-        single, i, j, utr="u", vtr="v", layer=None, geometry="cartesian",
+        single, i, j, utr="u", vtr="v", geometry="cartesian",
     )["conv_mass_transport"].sum().values
     assert np.abs(geom) > 1e-6               # non-trivial: the sign actually matters
     conv_single = convergent_transport(
-        single, i, j, utr="u", vtr="v", layer=None, geometry="cartesian",
+        single, i, j, utr="u", vtr="v", geometry="cartesian",
         positive_in=box_mask(single),
     )["conv_mass_transport"].sum().values
 
     i2, j2, f2, *_ = grid_section(split, lonseg, latseg)
     assert set(np.unique(f2).tolist()) == {0, 1}   # genuinely crosses the seam
     conv_split = convergent_transport(
-        split, i2, j2, f2, utr="u", vtr="v", layer=None, geometry="cartesian",
+        split, i2, j2, f2, utr="u", vtr="v", geometry="cartesian",
         positive_in=box_mask(split),
     )["conv_mass_transport"].sum().values
 
@@ -219,13 +219,13 @@ def test_left_multitile_seam_transport_matches_uncut_grid():
 
     i, j, lons, lats = grid_section(single, lonseg, latseg)
     conv_single = convergent_transport(
-        single, i, j, utr="u", vtr="v", layer=None, geometry="cartesian"
+        single, i, j, utr="u", vtr="v", geometry="cartesian"
     )["conv_mass_transport"].sum().values
 
     i2, j2, f2, l2, la2 = grid_section(split, lonseg, latseg)
     assert set(np.unique(f2).tolist()) == {0, 1}  # really crosses the seam
     conv_split = convergent_transport(
-        split, i2, j2, f2, utr="u", vtr="v", layer=None, geometry="cartesian"
+        split, i2, j2, f2, utr="u", vtr="v", geometry="cartesian"
     )["conv_mass_transport"].sum().values
     assert np.isclose(conv_single, conv_split, rtol=1e-12)
 

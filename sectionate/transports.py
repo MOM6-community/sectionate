@@ -382,6 +382,44 @@ def uvcoords_from_qindices(grid, i_c, j_c, f_c=None):
         uvindices_from_qindices(grid, i_c, j_c, f_c=f_c),
     )
 
+# xgcm positions at which a vertical *interface* (cell-edge) coordinate can sit,
+# as opposed to the "center" position where the paired layer coordinate sits.
+_INTERFACE_POSITIONS = ("outer", "inner", "left", "right")
+
+
+def _interface_coords(grid, da):
+    """Interface (cell-edge) coordinates matching the vertical dimensions `da` carries.
+
+    A transport's layer (cell-center) coordinate needs no help: it is one of the
+    transport's own dimensions, so it rides along from `utr`/`vtr` into the section.
+    Its interface coordinate cannot -- it is one point longer, and so is a dimension of
+    nothing on the section. The grid knows it, though: an axis that registers one of
+    `da`'s dimensions at its "center" position names the matching interface coordinate
+    at one of its interface positions.
+
+    Keyed off the data's own dimensions rather than off an axis called "Z", so a
+    vertical axis under any name is found, and a grid that declares only its horizontal
+    axes (as most grids handed to sectionate do, since sections are only ever traced
+    horizontally) simply contributes nothing.
+
+    Only names present in `grid._ds` are returned: xgcm requires an axis' positions to
+    name *dimensions*, but a dimension need not carry coordinate values.
+    """
+    coords = {}
+    for axis in grid.axes.values():
+        positions = axis.coords
+        if positions.get("center") not in da.dims:
+            continue
+        name = next(
+            (positions[pos] for pos in _INTERFACE_POSITIONS
+             if positions.get(pos) in grid._ds),
+            None
+        )
+        if name is not None:
+            coords[name] = grid._ds[name]
+    return coords
+
+
 def convergent_transport(
     grid,
     i_c,
@@ -389,8 +427,6 @@ def convergent_transport(
     f_c=None,
     utr="umo",
     vtr="vmo",
-    layer="z_l",
-    interface="z_i",
     outname="conv_mass_transport",
     sect_coord="sect",
     geometry="spherical",
@@ -419,11 +455,6 @@ def convergent_transport(
         Name of "X"-direction tracer transport
     vtr: str
         Name of "Y"-direction tracer transport
-    layer : str or None
-        Name of the vertical layer (cell-center) coordinate, or None for grids without one.
-    interface : str or None
-        Name of the vertical interface coordinate, or None. If both are given, they must be
-        consistent (`layer` is `interface` with "l" in place of "i").
     outname : str
         Name of output xr.DataArray variable. Default: "conv_mass_transport".
     sect_coord: str
@@ -452,12 +483,15 @@ def convergent_transport(
         Contains the calculated normal transport and the coordinates of the contributing velocity points (`lon`, `lat`),
         as well as some useful metadata, such as whether each point corresponds to a "U" or "V" velocity and whether
         the sign of the transport had to be flipped to make it point inwards.
+
+        Vertical coordinates are not named anywhere in the call: the layer (cell-center)
+        coordinate is inherited from `utr`/`vtr`, being one of their dimensions, and the
+        matching interface (cell-edge) coordinate is read off whichever axis of `grid`
+        registers that layer dimension at its "center" position. Declare the vertical
+        axis on the `xgcm.Grid` (e.g. `coords={..., "Z": {"center": "z_l", "outer":
+        "z_i"}}`) if the interface coordinate is wanted downstream.
     """
-    
-    if (layer is not None) and (interface is not None):
-        if layer.replace("l", "i") != interface:
-            raise ValueError("Inconsistent layer and interface grid variables!")
-            
+
     # On a multi-tile grid the contributing velocity face varies along the section
     # (`uvindices["face"]`); it is selected pointwise in every `.isel` below.
     facedim = get_facedim(grid) if f_c is not None else None
@@ -605,10 +639,9 @@ def convergent_transport(
         "positive_in":positive_in,
     }}
 
-    if layer is not None:
-        dsout[layer] = grid._ds[layer]
-        if interface is not None:
-            dsout[interface] = grid._ds[interface]
+    # The layer (cell-center) coordinate arrived with `utr`/`vtr`; its interface
+    # coordinate is a point longer and has to come from the grid (`_interface_coords`).
+    dsout = dsout.assign_coords(_interface_coords(grid, dsout[outname]))
 
     return dsout
 
