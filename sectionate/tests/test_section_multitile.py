@@ -545,3 +545,46 @@ def test_save_load_roundtrip_preserves_face_indices(tmp_path):
     t1 = convergent_transport(grid, gs.i_c, gs.j_c, gs.f_c, **kw)["conv_mass_transport"].sum().values
     t2 = convergent_transport(grid, gs2.i_c, gs2.j_c, gs2.f_c, **kw)["conv_mass_transport"].sum().values
     assert np.isclose(t1, t2)
+
+
+# ---------------------------------------------------------------------------
+# A registered vertical axis must not affect horizontal topology
+# ---------------------------------------------------------------------------
+
+def _with_vertical_axis(grid):
+    """Rebuild `grid` with an extra registered Z axis and nothing else changed."""
+    coords = {name: dict(axis.coords) for name, axis in grid.axes.items()}
+    coords["Z"] = {"center": "z_l", "outer": "z_i"}
+    ds = grid._ds.assign_coords({"z_l": ("z_l", np.array([5., 15.])),
+                                 "z_i": ("z_i", np.array([0., 10., 20.]))})
+    return xgcm.Grid(
+        ds, coords=coords,
+        padding={**{name: axis.padding for name, axis in grid.axes.items()}, "Z": "extend"},
+        fill_value=np.nan,
+        face_connections=grid._face_connections,
+        autoparse_metadata=False,
+    )
+
+
+def assert_maps_equal(a, b):
+    assert set(a) == set(b)
+    for d in a:
+        for x, y in zip(a[d], b[d]):
+            if x is None or y is None:
+                assert x is None and y is None
+            else:
+                np.testing.assert_array_equal(x, y)
+
+
+@pytest.mark.parametrize("fixture", [
+    two_face_x_to_x,        # 'outer' corners, no tracer centers -> _multitile_padded_maps
+    left_two_tile_x_to_y,   # 'left' corners with centers        -> _OuterTopology
+])
+def test_vertical_axis_does_not_affect_multitile_neighbor_maps(fixture):
+    """Both multi-tile neighbor-map paths padded their index arrays over *every* axis
+    of the grid, so a Z axis -- which every real model grid registers -- made the grid
+    untraceable. The maps must be identical with and without one."""
+    grid = fixture()
+    plain = build_neighbor_maps(grid, get_geo_corners(grid))
+    with_z = _with_vertical_axis(grid)
+    assert_maps_equal(plain, build_neighbor_maps(with_z, get_geo_corners(with_z)))
