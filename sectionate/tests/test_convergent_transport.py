@@ -51,7 +51,6 @@ def test_convergent_transport():
         j,
         utr="u",
         vtr="v",
-        layer=None,
         geometry="cartesian"
     )['conv_mass_transport'].sum().values
     
@@ -133,7 +132,7 @@ def test_open_section_left_of_transect():
         with warnings.catch_warnings():
             warnings.simplefilter("ignore")  # open-section UserWarning is expected here
             return convergent_transport(
-                grid, i_c, j_c, utr="u", vtr="v", layer=None,
+                grid, i_c, j_c, utr="u", vtr="v",
                 geometry="cartesian", positive_in=positive_in,
             )["conv_mass_transport"].sum().values
 
@@ -147,7 +146,7 @@ def test_open_section_left_of_transect():
     # The open-section orientation warning must be raised.
     with pytest.warns(UserWarning, match="left-of-transect"):
         convergent_transport(
-            grid, i, j, utr="u", vtr="v", layer=None, geometry="cartesian",
+            grid, i, j, utr="u", vtr="v", geometry="cartesian",
         )
 
 
@@ -170,7 +169,6 @@ def test_convergent_transport_convention():
         j,
         utr="u",
         vtr="v",
-        layer=None
     )['conv_mass_transport'].sum().values
     
     conv_rev = convergent_transport(
@@ -179,17 +177,25 @@ def test_convergent_transport_convention():
         j[::-1],
         utr="u",
         vtr="v",
-        layer=None
     )['conv_mass_transport'].sum().values
     
     assert np.equal(-3., conv) and np.equal(-3, conv_rev)
 
 
-def initialize_minimal_vertical_grid(layer, interface, register_z=True):
+
+# ---------------------------------------------------------------------------
+# Vertical coordinates on the output: the layer coordinate comes along with the
+# transports, the interface coordinate comes from the grid.
+# ---------------------------------------------------------------------------
+
+def initialize_minimal_vertical_grid(
+    layer="z_l", interface="z_i", register_z=True, axis="Z"
+):
     """The minimal 1x1-cell 'outer' grid of `initialize_minimal_outer_grid`, plus a
-    single-layer vertical coordinate named (`layer`, `interface`). `register_z` selects
-    whether the grid declares that vertical axis or (as most grids handed to sectionate
-    do, since sections are only ever traced horizontally) only its horizontal ones."""
+    single-layer vertical coordinate named (`layer`, `interface`) that the transports
+    "u"/"v" are resolved over. `register_z` selects whether the grid declares that
+    vertical axis or (as most grids handed to sectionate do, since sections are only
+    ever traced horizontally) only its horizontal ones; `axis` names it."""
     xh, yh = np.array([0.5]), np.array([0.5])
     xq, yq = np.array([0., 1.]), np.array([0., 1.])
 
@@ -214,20 +220,23 @@ def initialize_minimal_vertical_grid(layer, interface, register_z=True):
         'Y': {'outer': 'yq', 'center': 'yh'},
     }
     if register_z:
-        coords['Z'] = {'center': layer, 'outer': interface}
+        coords[axis] = {'center': layer, 'outer': interface}
     return xgcm.Grid(ds, coords=coords, padding={'X': "extend", 'Y': "extend"},
                      autoparse_metadata=False)
 
 
 # The closed path of vorticity points around the single cell of the minimal grid,
 # i.e. what `grid_section` returns for the square [0,1]x[0,1] (see
-# `test_convergent_transport`); hardcoded so these tests exercise only
-# `convergent_transport`'s layer/interface handling.
+# `test_convergent_transport`); hardcoded so these tests exercise only how
+# `convergent_transport` labels its output vertically.
 MINIMAL_LOOP_I = np.array([0, 1, 1, 0, 0])
 MINIMAL_LOOP_J = np.array([0, 0, 1, 1, 0])
 
+# The transport around that cell, independent of how it is resolved vertically.
+MINIMAL_LOOP_TRANSPORT = 1. + 0. + np.sqrt(2.) - np.pi
 
-def transport_around_minimal_cell(grid, layer, interface):
+
+def transport_around_minimal_cell(grid):
     from sectionate.transports import convergent_transport
     return convergent_transport(
         grid,
@@ -235,116 +244,99 @@ def transport_around_minimal_cell(grid, layer, interface):
         MINIMAL_LOOP_J,
         utr="u",
         vtr="v",
-        layer=layer,
-        interface=interface,
         geometry="cartesian",
     )
 
 
-@pytest.mark.parametrize("register_z", [True, False])
-@pytest.mark.parametrize("layer,interface", [
-    ("z_l", "z_i"),           # the canonical MOM6 depth coordinate
-    ("sigma2_l", "sigma2_i"),  # a stem with no "l" in it
-    ("lam_l", "lam_i"),        # a stem containing an "l" ...
-    ("level_l", "level_i"),    # ... and one containing two
-])
-def test_layer_interface_pairs_accepted(layer, interface, register_z):
-    """A consistent (layer, interface) pair must be accepted whatever its stem spells.
-    Matching them by rewriting every "l" in `layer` into an "i" spuriously rejected any
-    stem that itself contains an "l"."""
-    grid = initialize_minimal_vertical_grid(layer, interface, register_z=register_z)
-    dsout = transport_around_minimal_cell(grid, layer, interface)
+def test_layer_coordinate_comes_from_the_transports():
+    """The layer (cell-center) coordinate is a dimension of `utr`/`vtr` themselves, so it
+    reaches the output without being named. A grid declaring only its horizontal axes --
+    the usual case -- has no interface coordinate to add."""
+    grid = initialize_minimal_vertical_grid("sigma2_l", "sigma2_i", register_z=False)
+    dsout = transport_around_minimal_cell(grid)
 
-    # both vertical coordinates are carried through to the output ...
-    assert layer in dsout.coords
-    assert interface in dsout.coords
-    # ... and the transport is the depth-independent result of `test_convergent_transport`
-    conv = dsout['conv_mass_transport'].sum().values
-    assert np.isclose(1. + 0. + np.sqrt(2.) - np.pi, conv, rtol=1.e-14)
-
-
-def test_layer_interface_from_grid_axis_without_naming_convention():
-    """Names the grid itself pairs on one axis are accepted even when they follow no
-    "_l"/"_i" naming convention: the grid, not the spelling, is the authority."""
-    grid = initialize_minimal_vertical_grid("MyCenters", "MyEdges", register_z=True)
-    dsout = transport_around_minimal_cell(grid, "MyCenters", "MyEdges")
-    assert "MyCenters" in dsout.coords and "MyEdges" in dsout.coords
-
-
-@pytest.mark.parametrize("layer,interface", [
-    ("z_l", "sigma2_i"),  # two different vertical coordinates
-    ("ml_l", "mi_i"),     # different stems ("ml" vs "mi"), but a whole-string
-                          # "l"->"i" substitution would have accepted them
-    ("z_l", "z_l"),       # the layer coordinate passed twice
-])
-def test_inconsistent_layer_interface_rejected(layer, interface):
-    """Genuinely mismatched pairs are still rejected, and the message names them. The
-    grid registers no vertical axis here, so the names are all there is to go on; a
-    grid that *does* register one rejects a contradicting name earlier and more
-    specifically (see `test_layer_interface_contradicting_z_axis_raises`)."""
-    grid = initialize_minimal_vertical_grid("z_l", "z_i", register_z=False)
-    with pytest.raises(ValueError, match="do not describe the same vertical axis"):
-        transport_around_minimal_cell(grid, layer, interface)
-
-
-# ---------------------------------------------------------------------------
-# layer/interface are taken from the grid's vertical axis when it has one
-# ---------------------------------------------------------------------------
-
-def test_layer_interface_derived_from_grid_z_axis():
-    """A grid that registers a "Z" axis already names its vertical coordinates, so the
-    caller should not have to repeat them."""
-    grid = initialize_minimal_vertical_grid("sigma2_l", "sigma2_i", register_z=True)
-    dsout = transport_around_minimal_cell(grid, None, None)  # nothing passed
     assert "sigma2_l" in dsout.coords
-    assert "sigma2_i" in dsout.coords
-    conv = dsout['conv_mass_transport'].sum().values
-    assert np.isclose(1. + 0. + np.sqrt(2.) - np.pi, conv, rtol=1.e-14)
+    np.testing.assert_array_equal(dsout["sigma2_l"].values, np.array([0.5]))
+    assert "sigma2_i" not in dsout.coords
+    assert np.isclose(
+        dsout['conv_mass_transport'].sum().values, MINIMAL_LOOP_TRANSPORT, rtol=1.e-14
+    )
 
 
-def test_layer_interface_derived_matches_explicitly_passed():
-    """Passing the same names the "Z" axis carries -- what a caller that read them off
-    `grid.axes["Z"].coords` does -- is equivalent to passing nothing."""
-    grid = initialize_minimal_vertical_grid("lam_l", "lam_i", register_z=True)
-    zc = grid.axes["Z"].coords["center"]
-    zi = grid.axes["Z"].coords["outer"]
-    explicit = transport_around_minimal_cell(grid, zc, zi)
-    derived = transport_around_minimal_cell(grid, None, None)
-    xr.testing.assert_identical(explicit, derived)
+def test_interface_coordinate_comes_from_the_grid():
+    """The interface coordinate is one point longer than the layer coordinate, so it is a
+    dimension of nothing on the section and cannot ride along. A grid that registers its
+    vertical axis names it, and it is attached from there."""
+    grid = initialize_minimal_vertical_grid("sigma2_l", "sigma2_i", register_z=True)
+    dsout = transport_around_minimal_cell(grid)
+
+    assert "sigma2_l" in dsout.coords and "sigma2_i" in dsout.coords
+    np.testing.assert_array_equal(dsout["sigma2_i"].values, np.array([0., 1.]))
+    # Only the vertical axis contributes: the horizontal ones are indexed away along the
+    # section, so no "xq"/"yq" dimension is dragged back onto the output.
+    assert set(dsout.sizes) == {"sect", "sigma2_l", "sigma2_i"}
+    assert np.isclose(
+        dsout['conv_mass_transport'].sum().values, MINIMAL_LOOP_TRANSPORT, rtol=1.e-14
+    )
 
 
 @pytest.mark.parametrize("layer,interface", [
-    ("z_l", None),        # layer contradicts the axis
-    (None, "z_i"),        # interface contradicts the axis
-    ("z_l", "z_i"),       # both do
+    ("z_l", "z_i"),             # the canonical MOM6 depth coordinate
+    ("lam_l", "lam_i"),         # a stem containing an "l" ...
+    ("level_l", "level_i"),     # ... and one containing two
+    ("MyCenters", "MyEdges"),   # no shared stem and no suffix convention at all
 ])
-def test_layer_interface_contradicting_z_axis_raises(layer, interface):
-    """An explicit name that disagrees with the grid's own vertical axis is an error,
-    not an override: the output would be labelled with a coordinate that need not
-    describe the data."""
-    grid = initialize_minimal_vertical_grid("sigma2_l", "sigma2_i", register_z=True)
-    with pytest.raises(ValueError, match="contradicts the grid"):
-        transport_around_minimal_cell(grid, layer, interface)
+def test_vertical_coordinate_names_need_no_convention(layer, interface):
+    """The pair is matched through the grid axis that registers it, so it works whatever
+    the names spell. Matching them by rewriting every "l" of the layer name into an "i"
+    rejected any stem that itself contained an "l"."""
+    grid = initialize_minimal_vertical_grid(layer, interface, register_z=True)
+    dsout = transport_around_minimal_cell(grid)
+    assert layer in dsout.coords and interface in dsout.coords
 
 
-def test_no_vertical_axis_and_no_names_attaches_nothing():
-    """Without a "Z" axis and without explicit names there is no vertical coordinate to
-    attach -- and, unlike the old `layer="z_l"` default, no lookup of a name the grid
-    has never heard of."""
+def test_vertical_axis_need_not_be_named_Z():
+    """The axis is found through the dimension the transports carry, not by looking up an
+    axis called "Z", so a differently named vertical axis works the same way."""
+    grid = initialize_minimal_vertical_grid(
+        "sigma2_l", "sigma2_i", register_z=True, axis="sigma2"
+    )
+    dsout = transport_around_minimal_cell(grid)
+    assert "sigma2_l" in dsout.coords and "sigma2_i" in dsout.coords
+
+
+def test_interface_dimension_without_coordinate_values_attaches_nothing():
+    """An axis position may name a bare dimension carrying no coordinate values; there is
+    then nothing to attach, and the layer coordinate still arrives with the transports."""
+    grid = initialize_minimal_vertical_grid("z_l", "z_i", register_z=True)
+    grid._ds = grid._ds.drop_vars("z_i")  # keep the dim, drop its values
+    dsout = transport_around_minimal_cell(grid)
+    assert "z_l" in dsout.coords
+    assert "z_i" not in dsout.coords
+
+
+def test_two_dimensional_transports_get_no_vertical_coordinates():
+    """Transports with no vertical dimension pick up no vertical coordinate -- and, unlike
+    the old `layer="z_l"` default, trigger no lookup of a name the grid never heard of."""
+    from sectionate.transports import convergent_transport
     grid = initialize_minimal_outer_grid()
     grid._ds['u'] = xr.DataArray(np.array([[1., -np.sqrt(2.)]]), dims=("yh", "xq",))
     grid._ds['v'] = xr.DataArray(np.array([[0], [np.pi]]), dims=("yq", "xh",))
-    dsout = transport_around_minimal_cell(grid, None, None)
-    assert not any(c.endswith(("_l", "_i")) for c in dsout.coords)
-    conv = dsout['conv_mass_transport'].sum().values
-    assert np.isclose(1. + 0. + np.sqrt(2.) - np.pi, conv, rtol=1.e-14)
+    dsout = transport_around_minimal_cell(grid)
+    assert set(dsout.sizes) == {"sect"}
+    assert np.isclose(
+        dsout['conv_mass_transport'].sum().values, MINIMAL_LOOP_TRANSPORT, rtol=1.e-14
+    )
 
 
-def test_z_axis_center_without_coordinate_values_is_not_derived():
-    """A "Z" axis position may name a bare dimension carrying no coordinate values;
-    such a name cannot be attached to the output, so it is not derived."""
+@pytest.mark.parametrize("kwarg", ["layer", "interface"])
+def test_layer_and_interface_keywords_are_gone(kwarg):
+    """Both were removed: the layer coordinate comes from the data and the interface
+    coordinate from the grid, so there is nothing left for a caller to name."""
+    from sectionate.transports import convergent_transport
     grid = initialize_minimal_vertical_grid("z_l", "z_i", register_z=True)
-    grid._ds = grid._ds.drop_vars("z_i")  # keep the dim, drop its values
-    dsout = transport_around_minimal_cell(grid, None, None)
-    assert "z_l" in dsout.coords
-    assert "z_i" not in dsout.coords
+    with pytest.raises(TypeError, match=kwarg):
+        convergent_transport(
+            grid, MINIMAL_LOOP_I, MINIMAL_LOOP_J, utr="u", vtr="v",
+            geometry="cartesian", **{kwarg: "z_l"},
+        )

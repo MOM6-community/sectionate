@@ -363,8 +363,7 @@ def test_cube_section_transport_is_streamfunction_difference(lonlat):
     grid, psi = cube_left_grid()
     lons, lats = lonlat
     i_c, j_c, f_c, lons_c, lats_c = grid_section(grid, list(lons), list(lats))
-    conv = convergent_transport(grid, i_c, j_c, f_c, utr="u", vtr="v",
-                                layer=None)["conv_mass_transport"].sum().values
+    conv = convergent_transport(grid, i_c, j_c, f_c, utr="u", vtr="v")["conv_mass_transport"].sum().values
     # endpoint psi values, from the walked path's own native endpoints
     ot = outer_topology(grid)
     cxyz = _outer_corners_xyz()
@@ -406,8 +405,7 @@ def test_cube_section_over_pole_has_stable_geometric_sign(lonlat, faces_expected
     assert 0 < int(at_pole[0]) < len(lats_c) - 1
     assert set(np.asarray(f_c).tolist()) == faces_expected
 
-    conv = convergent_transport(grid, i_c, j_c, f_c, utr="u", vtr="v",
-                                layer=None)["conv_mass_transport"]
+    conv = convergent_transport(grid, i_c, j_c, f_c, utr="u", vtr="v")["conv_mass_transport"]
     # The most pole-adjacent velocity face genuinely carries flux, so its sign is
     # not free to be wrong-yet-harmless.
     polest = int(np.argmax(np.asarray(conv["lat"].values)))
@@ -447,8 +445,7 @@ def test_cube_closed_section_around_vertex_carries_zero_net_transport():
 
     i_c, j_c, f_c, _, _ = grid_section(grid, lons, lats)
     assert len(set(np.asarray(f_c).tolist())) >= 3   # truly encircles the vertex
-    conv = convergent_transport(grid, i_c, j_c, f_c, utr="u", vtr="v",
-                                layer=None)["conv_mass_transport"].sum().values
+    conv = convergent_transport(grid, i_c, j_c, f_c, utr="u", vtr="v")["conv_mass_transport"].sum().values
     assert abs(float(conv)) < 1e-12
 
 
@@ -609,8 +606,7 @@ def test_outer_reverse_gluing_matches_by_coincidence():
     # a section crossing several faces (hence reverse seams): transport == dpsi
     i_c, j_c, f_c, lons, lats = grid_section(grid, [10., -150.], [40., -30.])
     assert len(set(np.asarray(f_c).tolist())) >= 3
-    conv = convergent_transport(grid, i_c, j_c, f_c, utr="u", vtr="v",
-                                layer=None)["conv_mass_transport"].sum().values
+    conv = convergent_transport(grid, i_c, j_c, f_c, utr="u", vtr="v")["conv_mass_transport"].sum().values
     p0 = psi[int(f_c[0]), int(j_c[0]), int(i_c[0])]
     p1 = psi[int(f_c[-1]), int(j_c[-1]), int(i_c[-1])]
     assert np.isclose(abs(float(conv)), abs(p1 - p0), rtol=1e-9)

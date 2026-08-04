@@ -65,10 +65,10 @@ def test_oblique_section_reversible_and_equal_transport():
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")  # open-section UserWarning
         c_fwd = convergent_transport(
-            grid, i, j, utr="u", vtr="v", layer=None, geometry="cartesian"
+            grid, i, j, utr="u", vtr="v", geometry="cartesian"
         )["conv_mass_transport"].sum().values
         c_rev = convergent_transport(
-            grid, i[::-1], j[::-1], utr="u", vtr="v", layer=None, geometry="cartesian"
+            grid, i[::-1], j[::-1], utr="u", vtr="v", geometry="cartesian"
         )["conv_mass_transport"].sum().values
     assert np.isclose(abs(c_fwd), abs(c_rev), rtol=1e-12)
 

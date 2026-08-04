@@ -387,105 +387,37 @@ def uvcoords_from_qindices(grid, i_c, j_c, f_c=None):
 _INTERFACE_POSITIONS = ("outer", "inner", "left", "right")
 
 
-def _layer_interface_axis(grid, layer, interface):
-    """Name of the `grid` axis that registers `layer` at its "center" position and
-    `interface` at one of its interface positions, or None if no single axis does."""
-    for name, axis in grid.axes.items():
-        coords = axis.coords
-        if coords.get("center") != layer:
+def _interface_coords(grid, da):
+    """Interface (cell-edge) coordinates matching the vertical dimensions `da` carries.
+
+    A transport's layer (cell-center) coordinate needs no help: it is one of the
+    transport's own dimensions, so it rides along from `utr`/`vtr` into the section.
+    Its interface coordinate cannot -- it is one point longer, and so is a dimension of
+    nothing on the section. The grid knows it, though: an axis that registers one of
+    `da`'s dimensions at its "center" position names the matching interface coordinate
+    at one of its interface positions.
+
+    Keyed off the data's own dimensions rather than off an axis called "Z", so a
+    vertical axis under any name is found, and a grid that declares only its horizontal
+    axes (as most grids handed to sectionate do, since sections are only ever traced
+    horizontally) simply contributes nothing.
+
+    Only names present in `grid._ds` are returned: xgcm requires an axis' positions to
+    name *dimensions*, but a dimension need not carry coordinate values.
+    """
+    coords = {}
+    for axis in grid.axes.values():
+        positions = axis.coords
+        if positions.get("center") not in da.dims:
             continue
-        if any(coords.get(pos) == interface for pos in _INTERFACE_POSITIONS):
-            return name
-    return None
-
-
-def _suffix_paired(layer, interface):
-    """Whether `layer`/`interface` follow the `<stem>l`/`<stem>i` naming convention
-    (e.g. "z_l"/"z_i", "sigma2_l"/"sigma2_i"), anchored at the *end* of the name."""
-    return (
-        layer.endswith("l")
-        and interface.endswith("i")
-        and layer[:-1] == interface[:-1]
-    )
-
-
-def _validate_layer_interface(grid, layer, interface):
-    """Raise unless `layer` and `interface` describe the same vertical axis.
-
-    The grid already knows the answer, so ask it: accept the pair if any axis of
-    `grid` registers `layer` at its "center" position and `interface` at an
-    interface position. Grids handed to sectionate frequently declare only their
-    horizontal axes, though (the vertical one is never traced over), so a pair the
-    grid says nothing about falls back to the `<stem>l`/`<stem>i` naming convention.
-
-    Note this is a suffix-anchored fallback, not a whole-string substitution: the
-    latter rewrites every "l" in the name and so rejects perfectly consistent pairs
-    whose stem happens to contain one (e.g. "lam_l"/"lam_i").
-    """
-    if _layer_interface_axis(grid, layer, interface) is not None:
-        return
-    if _suffix_paired(layer, interface):
-        return
-    offered = ", ".join(
-        f"{name}={dict(axis.coords)}" for name, axis in grid.axes.items()
-    ) or "none"
-    raise ValueError(
-        f"Inconsistent layer and interface grid variables: layer={layer!r} and "
-        f"interface={interface!r} do not describe the same vertical axis. No axis "
-        f"of the grid registers {layer!r} at its 'center' position together with "
-        f"{interface!r} at an interface position "
-        f"({'/'.join(_INTERFACE_POSITIONS)}), and the two names do not follow the "
-        f"'<stem>l'/'<stem>i' convention (e.g. 'z_l'/'z_i') either. "
-        f"Grid axes: {offered}."
-    )
-
-
-def _vertical_axis_pair(grid):
-    """The (center, interface) coordinate names of the `grid`'s vertical ("Z") axis,
-    or (None, None) if it registers none.
-
-    Only names that are actually present in `grid._ds` are returned: xgcm requires an
-    axis' positions to name *dimensions*, but a dimension need not carry coordinate
-    values, and these names are attached to the output by lookup.
-    """
-    axis = grid.axes.get("Z")
-    if axis is None:
-        return None, None
-    coords = axis.coords
-    center = coords.get("center")
-    interface = next((coords[pos] for pos in _INTERFACE_POSITIONS if pos in coords), None)
-    return (center if center in grid._ds else None,
-            interface if interface in grid._ds else None)
-
-
-def _resolve_layer_interface(grid, layer, interface):
-    """Decide which vertical coordinate names label the output.
-
-    The grid is the authority whenever it has one to give: if it registers a "Z" axis,
-    that axis' center and interface coordinates are used, and the caller need not name
-    them at all. An explicitly passed name that *contradicts* the grid is an error
-    rather than an override -- a caller who disagrees with the grid about which
-    vertical coordinate its transports live on is confused, and quietly preferring
-    either one would label the output with a coordinate that may not describe the data.
-    Passing names that agree with the grid stays valid, since that is how callers that
-    read them off `grid.axes["Z"].coords` in the first place invoke this.
-
-    Without a "Z" axis the passed names are used as given, checked against each other
-    by `_validate_layer_interface`.
-    """
-    zc, zi = _vertical_axis_pair(grid)
-    for passed, derived, what in ((layer, zc, "layer"), (interface, zi, "interface")):
-        if passed is not None and derived is not None and passed != derived:
-            raise ValueError(
-                f"{what}={passed!r} contradicts the grid: its 'Z' axis registers "
-                f"{derived!r} at that position ({dict(grid.axes['Z'].coords)}). Pass "
-                f"{what}={derived!r}, or omit it and let the axis supply it."
-            )
-    layer = zc if zc is not None else layer
-    interface = zi if zi is not None else interface
-    if (layer is not None) and (interface is not None):
-        _validate_layer_interface(grid, layer, interface)
-    return layer, interface
+        name = next(
+            (positions[pos] for pos in _INTERFACE_POSITIONS
+             if positions.get(pos) in grid._ds),
+            None
+        )
+        if name is not None:
+            coords[name] = grid._ds[name]
+    return coords
 
 
 def convergent_transport(
@@ -495,8 +427,6 @@ def convergent_transport(
     f_c=None,
     utr="umo",
     vtr="vmo",
-    layer=None,
-    interface=None,
     outname="conv_mass_transport",
     sect_coord="sect",
     geometry="spherical",
@@ -525,24 +455,6 @@ def convergent_transport(
         Name of "X"-direction tracer transport
     vtr: str
         Name of "Y"-direction tracer transport
-    layer : str or None
-        Name of the vertical layer (cell-center) coordinate. Default: None, meaning
-        "take it from the grid" — if `grid` registers a "Z" axis, that axis' "center"
-        coordinate is used and nothing need be passed. Only grids that do not declare
-        their vertical axis need to name it here; if there is no "Z" axis and nothing
-        is passed, the output simply carries no layer coordinate.
-    interface : str or None
-        Name of the vertical interface coordinate, resolved the same way from the "Z"
-        axis' interface position ("outer"/"inner"/"left"/"right"). Default: None.
-
-        A name that *contradicts* the grid's "Z" axis raises, rather than overriding it.
-        Passing names that agree with the axis is fine, which is how callers that read
-        them off `grid.axes["Z"].coords` invoke this.
-
-        When the grid declares no vertical axis and both names are given, they must
-        still describe the same one: either some axis of the grid registers `layer` at
-        "center" and `interface` at an interface position, or the names follow the
-        `<stem>l`/`<stem>i` convention (e.g. "z_l"/"z_i", "sigma2_l"/"sigma2_i").
     outname : str
         Name of output xr.DataArray variable. Default: "conv_mass_transport".
     sect_coord: str
@@ -571,9 +483,14 @@ def convergent_transport(
         Contains the calculated normal transport and the coordinates of the contributing velocity points (`lon`, `lat`),
         as well as some useful metadata, such as whether each point corresponds to a "U" or "V" velocity and whether
         the sign of the transport had to be flipped to make it point inwards.
-    """
 
-    layer, interface = _resolve_layer_interface(grid, layer, interface)
+        Vertical coordinates are not named anywhere in the call: the layer (cell-center)
+        coordinate is inherited from `utr`/`vtr`, being one of their dimensions, and the
+        matching interface (cell-edge) coordinate is read off whichever axis of `grid`
+        registers that layer dimension at its "center" position. Declare the vertical
+        axis on the `xgcm.Grid` (e.g. `coords={..., "Z": {"center": "z_l", "outer":
+        "z_i"}}`) if the interface coordinate is wanted downstream.
+    """
 
     # On a multi-tile grid the contributing velocity face varies along the section
     # (`uvindices["face"]`); it is selected pointwise in every `.isel` below.
@@ -722,10 +639,9 @@ def convergent_transport(
         "positive_in":positive_in,
     }}
 
-    if layer is not None:
-        dsout[layer] = grid._ds[layer]
-        if interface is not None:
-            dsout[interface] = grid._ds[interface]
+    # The layer (cell-center) coordinate arrived with `utr`/`vtr`; its interface
+    # coordinate is a point longer and has to come from the grid (`_interface_coords`).
+    dsout = dsout.assign_coords(_interface_coords(grid, dsout[outname]))
 
     return dsout
 

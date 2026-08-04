@@ -278,7 +278,7 @@ def test_within_face_transport_matches_single_tile():
     assert np.all(f == 0)  # stays on face 0
 
     conv_mt = convergent_transport(
-        grid, i, j, f, utr="u", vtr="v", layer=None, geometry="cartesian"
+        grid, i, j, f, utr="u", vtr="v", geometry="cartesian"
     )["conv_mass_transport"].sum().values
 
     # Same section + transports on the standalone face-0 grid must agree exactly.
@@ -286,7 +286,7 @@ def test_within_face_transport_matches_single_tile():
     i0, j0, lons0, lats0 = grid_section(slab, lonseg, latseg)
     assert np.array_equal(i, i0) and np.array_equal(j, j0)
     conv_st = convergent_transport(
-        slab, i0, j0, utr="u", vtr="v", layer=None, geometry="cartesian"
+        slab, i0, j0, utr="u", vtr="v", geometry="cartesian"
     )["conv_mass_transport"].sum().values
 
     assert np.isclose(conv_mt, conv_st, rtol=1e-14)
@@ -384,13 +384,13 @@ def test_seam_crossing_transport_matches_uncut_grid():
 
     i, j, lons, lats = grid_section(single, lonseg, latseg)
     conv_single = convergent_transport(
-        single, i, j, utr="u", vtr="v", layer=None, geometry="cartesian"
+        single, i, j, utr="u", vtr="v", geometry="cartesian"
     )["conv_mass_transport"].sum().values
 
     i2, j2, f2, lons2, lats2 = grid_section(split, lonseg, latseg)
     assert set(np.unique(f2).tolist()) == {0, 1}  # the section really crosses the seam
     conv_split = convergent_transport(
-        split, i2, j2, f2, utr="u", vtr="v", layer=None, geometry="cartesian"
+        split, i2, j2, f2, utr="u", vtr="v", geometry="cartesian"
     )["conv_mass_transport"].sum().values
 
     assert np.isclose(conv_single, conv_split, rtol=1e-12)
@@ -447,12 +447,12 @@ def test_nonsymmetric_seam_transport_matches_uncut_grid():
     latseg = np.array([-15., -15., 15., 15., -15.])
     i, j, lons, lats = grid_section(single, lonseg, latseg)
     conv_single = convergent_transport(
-        single, i, j, utr="u", vtr="v", layer=None, geometry="cartesian"
+        single, i, j, utr="u", vtr="v", geometry="cartesian"
     )["conv_mass_transport"].sum().values
     i2, j2, f2, l2, la2 = grid_section(split, lonseg, latseg)
     assert set(np.unique(f2).tolist()) == {0, 1}
     conv_split = convergent_transport(
-        split, i2, j2, f2, utr="u", vtr="v", layer=None, geometry="cartesian"
+        split, i2, j2, f2, utr="u", vtr="v", geometry="cartesian"
     )["conv_mass_transport"].sum().values
     assert np.isclose(conv_single, conv_split, rtol=1e-12)
 
@@ -505,7 +505,7 @@ def test_rotated_seam_transport_streamfunction():
     i, j, f, lons, lats = grid_section(grid, [10., 70.], [20., 20.])
     assert set(np.unique(f).tolist()) == {0, 1}  # the section really crosses the rotated seam
     conv = convergent_transport(
-        grid, i, j, f, utr="u", vtr="v", layer=None, geometry="cartesian"
+        grid, i, j, f, utr="u", vtr="v", geometry="cartesian"
     )["conv_mass_transport"].sum().values
     dpsi = _psi(lons[-1], lats[-1]) - _psi(lons[0], lats[0])
     assert np.isclose(abs(conv), abs(dpsi), rtol=1e-9)
@@ -541,7 +541,7 @@ def test_save_load_roundtrip_preserves_face_indices(tmp_path):
     np.testing.assert_array_equal(np.asarray(gs2.j_c), np.asarray(gs.j_c))
 
     # transport from the reloaded section matches the original
-    kw = dict(utr="u", vtr="v", layer=None, geometry="cartesian")
+    kw = dict(utr="u", vtr="v", geometry="cartesian")
     t1 = convergent_transport(grid, gs.i_c, gs.j_c, gs.f_c, **kw)["conv_mass_transport"].sum().values
     t2 = convergent_transport(grid, gs2.i_c, gs2.j_c, gs2.f_c, **kw)["conv_mass_transport"].sum().values
     assert np.isclose(t1, t2)
