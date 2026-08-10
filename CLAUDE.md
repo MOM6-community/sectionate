@@ -54,7 +54,31 @@ done
 
 - **Run all tests:** `pytest`
 - **Run a single test:** `pytest sectionate/tests/test_section.py::test_find_closest_grid_point`
-- **Build docs:** `cd docs && make html` (requires `docs/environment.yml` environment)
+- **Build docs:** `cd docs && make html` (requires `docs/environment.yml` environment).
+  Add `SPHINXOPTS="-W"` to reproduce Read the Docs, which builds with `fail_on_warning: true`.
+
+## Documentation pages and figures
+
+`docs/source/` is Sphinx: `.rst` and MyST `.md` pages are hand-written, while
+`docs/source/examples/` is **generated** — `conf.py` deletes and re-copies it from
+`examples/*.ipynb` on every build, so never put a hand-written page or a static asset there.
+Both `nbsphinx` (notebooks) and `myst_parser` (`.md`) are enabled. Every new page must be
+added to the toctree in `docs/source/index.rst` in the same change, or the build fails.
+
+The figures on `docs/source/algorithm.md` are **committed artifacts**, because Read the Docs
+never executes anything (`nbsphinx_execute = "never"`). Regenerate them with:
+
+```bash
+python docs/make_algorithm_animation.py    # needs ffmpeg, from docs/environment.yml
+```
+
+It writes `docs/source/_static/algorithm/{walk.mp4,walk_steps.png}`. The script replays
+`sectionate.section.infer_grid_path` step by step to record per-step state for drawing, then
+**asserts that its replayed path matches `grid_section`** — so a change to the walk makes
+regeneration fail loudly instead of letting the page drift out of sync. If that assertion
+fires, the page prose almost certainly needs updating too. Keep the two artifacts small
+(currently ~0.5 MB combined): `docs/**` is not excluded from the sdist by `pyproject.toml`,
+so they ship to PyPI and live in git history permanently.
 
 ## Definition of Done (always, before committing or pushing)
 
