@@ -574,10 +574,25 @@ class _OuterTopology:
         # native corner (j, i) lives at outer slot (j+t, i+t)
         t = 1 if pos == "right" else 0
         nqy, nqx = Nyc + 1, Nxc + 1
+        # Unreachable on a well-formed grid: corner dims are Nc+1 for 'outer' and Nc
+        # for 'left'/'right', so this is an equality for 'outer' and 'right' (no slack
+        # at all) and leaves exactly one slot of slack for 'left'. What it really
+        # catches is a grid whose declared corner *position* contradicts the length of
+        # its corner arrays -- e.g. a symmetric (N+1)-length corner array declared
+        # 'right', which xgcm builds without complaint (`Axis.__init__` validates
+        # position names and duplicate dims, never dim lengths) -- or centers and
+        # corners taken from different grids. Worth keeping: without it the failure
+        # surfaces ~100 lines below as an opaque NumPy broadcast error out of the
+        # `ident[f, t:t+nyq, t:t+nxq, 1] = jn` fill. It is one-sided, though: corner
+        # arrays that are too *small* for the declared position (a 'left'-sized array
+        # declared 'outer') fit inside the lattice and are not caught here.
         if (t + nyq > nqy) or (t + nxq > nqx):
             raise ValueError(
-                "Corner arrays are larger than the grid's outer lattice; the "
-                "corner/center coordinates are inconsistent."
+                f"Corner dims ({nyq}, {nxq}) do not fit the outer lattice "
+                f"({nqy}, {nqx}) at the offset implied by '{pos}' staggering. Check "
+                "that the corner coordinates are declared at the right xgcm position "
+                "(a symmetric, (N+1)-length corner array is 'outer', not "
+                "'right'/'left') and that centers and corners come from the same grid."
             )
         self.facedim, self.nf, self.t = facedim, nf, t
         self.nqy, self.nqx = nqy, nqx
@@ -1188,13 +1203,21 @@ class _OuterTopology:
         each missing edge slot's value from the native storage of that physical
         edge (with the sign of the receiving face's own axis direction).
 
-        This is the topology-exact, xgcm-independent analogue of
+        This is a topology-exact, xgcm-independent analogue of
         ``xgcm.pad(..., other_component=...)``: every added slot is resolved
         through the corner-node graph to the *stored* velocity of the same
-        physical face. Unlike a halo pad it needs no vector rotation and, more
-        importantly, resolves edges that are stored on *no* face (open walls,
-        grid cuts, a cap's un-stored vertex) to zero -- a wall carries no
-        transport -- which no halo pad can supply a value for.
+        physical face. That buys three things over a halo pad -- it does not
+        depend on the halo being right across a rotated or reversed seam (cf.
+        xgcm#712, #749), it needs no vector rotation, and it takes plain arrays.
+        It is also independent of the axis `fill_value`: an edge stored on *no*
+        face (an open wall, a grid cut, a cap's un-stored vertex) is resolved to
+        zero, because a wall carries no transport, where a halo pad can only
+        insert whatever `fill_value` the axis declares. Where that `fill_value`
+        is already 0 the two agree exactly -- on ECCO LLC90 this and a dict-form
+        vector pad match bit for bit, both summing cell convergence to exactly
+        0.0 globally -- but where it is not they diverge: on the cubed-sphere
+        test fixture, whose `fill_value` is NaN, a vector pad leaves 23 of 128
+        cells' convergence NaN where this returns the correct 0.
 
         Parameters
         ----------
