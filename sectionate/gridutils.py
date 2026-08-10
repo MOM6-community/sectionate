@@ -181,9 +181,11 @@ def check_outer(grid):
 # hard-coding how to step across periodic boundaries, multi-tile face seams, or
 # the bipolar north fold, we precompute -- for every corner point -- the
 # ([face,] j, i) index of each of its four neighbors ("right", "left", "up",
-# "down"). Walls (no neighbor, e.g. a "fill"/"extend" edge) are represented as
-# the point itself, so the pathfinder simply never finds them closer to the
-# target -- reproducing clip-to-edge.
+# "down"). Where there is no neighbor -- a closed domain edge, i.e. a "fill" or
+# "extend" boundary -- the point is recorded as its own neighbor. A step in that
+# direction therefore stays put, so it never gets the walk closer to the target
+# and is never taken: the section stops at the boundary instead of running off
+# the array.
 #
 # For single-tile grids and multi-tile grids with shared ('outer') corners, the
 # topology logic lives upstream in `xgcm`: we pad index-valued arrays with the
@@ -267,6 +269,13 @@ def build_neighbor_maps(grid, geocorners):
                 "tracer-center coordinates to derive their corner topology."
             )
         return _multitile_padded_maps(grid, geocorners)
+
+    # --- single-tile grids (no face dimension) ---
+    # One corner array of dims (Y, X), whose only topology is each axis' own
+    # boundary condition: a periodic wrap, a closed ("fill"/"extend") edge, or a
+    # bipolar north fold. All three are what xgcm's halo padding already encodes,
+    # so the neighbor maps are read straight off the padded index arrays below and
+    # the returned maps carry `fmap = None`.
     da = geocorners["X"]
     Ydim, Xdim = da.dims[-2], da.dims[-1]
     ny, nx = da.sizes[Ydim], da.sizes[Xdim]
@@ -300,8 +309,9 @@ def build_neighbor_maps(grid, geocorners):
         sel = {Ydim: ysl, Xdim: xsl}
         jmap = pj.isel(sel).values
         imap = pi.isel(sel).values
-        # A NaN halo means "no neighbor" (an unconnected/fill edge) -- represent
-        # the wall as the point itself, matching the clip-to-edge behavior.
+        # A NaN halo means "no neighbor" (a closed, unconnected/fill edge): record
+        # the point as its own neighbor, so a step in that direction stays put and
+        # the walk stops at the boundary rather than running off the array.
         wall = np.isnan(jmap) | np.isnan(imap)
         jmap = np.where(wall, own_j, jmap).astype(np.int64)
         imap = np.where(wall, own_i, imap).astype(np.int64)
@@ -433,14 +443,26 @@ class _OuterTopology:
     cubed-sphere -- a single face's corner array is incomplete along two of its
     edges, and a physical vorticity point may be stored **once** (the common
     case), **not at all** (a junction that lives on no face -- a cube vertex, or
-    an LLC tile junction), or **more than once** (an 'outer' seam twin; a
-    bit-reversed copy across a self-folded boundary; the coincident lips of a
-    grid cut). Any topology derived by padding the per-face corner lattice
-    therefore breaks down exactly where regions are hardest to trace: rotated
-    seams, cube-vertex / tile junctions, and the polar grid cut. This class
-    instead reconstructs, per face, the full `(Nyc+1, Nxc+1)` outer lattice of
-    corner *slots* and resolves each slot to the native corner that stores its
-    physical point:
+    a point where three tiles meet), or **more than once** (an 'outer' seam twin;
+    a bit-reversed copy across a self-folded boundary; the coincident lips of a
+    *grid cut*).
+
+    **Grid cut** (used throughout this class): a seam along which the mesh has
+    been slit open, so that one line of physical corner points appears twice in
+    the lattice, as the two coincident "lips" of the cut. A cut differs from a
+    face seam in that it is *not* declared in `face_connections`: neither lip
+    enters the other's halo, so nothing combinatorial reveals that the two lips
+    are the same points -- only their coordinates do. Either lip may be stored
+    natively or not stored at all, and the two need not agree along the length of
+    the cut. For example, the ECCO LLC90 grid is slit under Antarctica along the
+    65E/115W great circle, leaving coincident, reversed-index lips (tiles 0/3 on
+    one side, tiles 9/12 on the other).
+
+    Any topology derived by padding the per-face corner lattice therefore breaks
+    down exactly where regions are hardest to trace: rotated seams, cube-vertex /
+    tile junctions, and grid cuts. This class instead reconstructs, per face, the
+    full `(Nyc+1, Nxc+1)` outer lattice of corner *slots* and resolves each slot
+    to the native corner that stores its physical point:
 
     1. **Cell-identity fill (topological).** Tracer *cells* pad reliably across
        any seam (rotation or reversal included), so each slot is keyed by the
@@ -458,20 +480,22 @@ class _OuterTopology:
     2. **Coordinate fallback (only for the under-determined residue).** A few
        slots are left: points stored on NO face (open walls; the two coincident
        lips of a grid cut), and slots with only two usable cells that DO have a
-       native storage (the LLC90 polar-cut corners, where a face's edge wraps onto
-       the pole and loses a cell). Two cells cannot fix a corner topologically, so
-       these last are matched to their stored native corner by extrapolating the
-       slot's position and snapping to the nearest native corner within a fraction
-       of the local spacing. This is the ONLY identity inferred from coordinates,
-       confined to the genuinely under-determined residue. Wall / cut slots get an
-       extrapolated position but no identity; those that snap to nothing keep it.
+       native storage (on LLC90, for instance, the corners along its polar cut,
+       where a face's edge wraps onto the pole and loses a cell). Two cells cannot
+       fix a corner topologically, so these last are matched to their stored native
+       corner by extrapolating the slot's position and snapping to the nearest
+       native corner within a fraction of the local spacing. This is the ONLY
+       identity inferred from coordinates, confined to the genuinely
+       under-determined residue. Wall / cut slots get an extrapolated position but
+       no identity; those that snap to nothing keep it.
     3. **Nodes.** Slots are merged into physical corner *nodes* by shared
        native identity and by exact physical coincidence (a unit-sphere
        position key, which also collapses the pole's degenerate longitudes).
        Node adjacency is read off the outer lattices: two nodes are neighbours
        iff some face holds index-adjacent slots for them. Every physical
-       velocity face is such an edge of exactly this graph, so cube-vertex
-       junctions are ordinary 4-valent (Arctic cap: 3-valent) nodes.
+       velocity face is such an edge of exactly this graph, so a junction where
+       several faces meet is an ordinary node of the usual valence (4 at a
+       cube vertex; 3 at the corners of LLC90's Arctic cap, for example).
     4. **Native maps.** The graph is projected back onto native corner indices
        as the standard `NEIGHBOR_DIRECTIONS` maps (`build_neighbor_maps`
        format): each native corner's neighbour in a direction is the adjacent
@@ -506,14 +530,14 @@ class _OuterTopology:
     # Coordinate-fallback acceptance threshold. Native identity is resolved
     # topologically wherever the tracer-cell fingerprint determines it; only a
     # small under-determined residue (slots with two usable cells that still have
-    # a native storage -- the LLC90 polar-cut corners) is matched by coordinates,
-    # by snapping the extrapolated slot to a native corner within this fraction of
-    # the local corner spacing. It is also the tolerance of the `loose` merge that
-    # unites the coincident lips of a grid cut. Extrapolation/round-off error is
-    # O(curvature * spacing**2), far below this; distinct corners are a full
-    # spacing apart, far above it -- though this margin narrows near coordinate
-    # singularities (the pole/cut), which is why identity is snapped only where no
-    # topological fingerprint exists.
+    # a native storage -- on LLC90, the corners along its polar cut) is matched by
+    # coordinates, by snapping the extrapolated slot to a native corner within this
+    # fraction of the local corner spacing. It is also the tolerance of the `loose`
+    # merge that unites the coincident lips of a grid cut. Extrapolation/round-off
+    # error is O(curvature * spacing**2), far below this; distinct corners are a
+    # full spacing apart, far above it -- though this margin narrows near
+    # coordinate singularities (a pole, or a cut), which is why identity is snapped
+    # only where no topological fingerprint exists.
     SNAP_FRACTION = 0.35
 
     def __init__(self, grid):
@@ -694,9 +718,9 @@ class _OuterTopology:
         # fingerprint identifies the slot exactly -- keyed against every native
         # corner's usable-cell 3-subsets (a subset is shared by at most one native
         # corner, so any match is unambiguous). This resolves such junctions with
-        # no coordinates. A junction stored on NO face (a cube vertex; the LLC
-        # un-stored polar corners) matches nothing here and is left for the
-        # coordinate-free `by_junction` merge below.
+        # no coordinates. A junction stored on NO face (for example a cube's
+        # un-stored vertex, or LLC90's un-stored polar-cut corners) matches nothing
+        # here and is left for the coordinate-free `by_junction` merge below.
         cell3_to_native = {}
         for f in range(nf):
             for j in range(nyq):
@@ -740,14 +764,15 @@ class _OuterTopology:
         # and 3-cell junction match) resolve every slot whose native identity is
         # combinatorially determined. What can be left are:
         #   (a) slots with only TWO usable cells that DO have a native storage --
-        #       chiefly the LLC90 polar-cut corners where a face's edge wraps onto
-        #       the 65E/115W great circle right at the pole and loses a cell. Two
-        #       cells do not fix a corner, so there is no topological fingerprint;
-        #       these are matched to their stored native corner by snapping the
-        #       extrapolated position to the nearest native corner within a small
-        #       fraction of the local spacing (`SNAP_FRACTION`). This is the only
-        #       place identity is inferred from coordinates, and only for this
-        #       genuinely under-determined residue (30 corners on LLC90).
+        #       corners where a face's edge runs into a grid cut or a pole and so
+        #       loses a cell. (On LLC90 these are its polar-cut corners, where a
+        #       face's edge wraps onto the 65E/115W great circle right at the pole:
+        #       30 corners in all.) Two cells do not fix a corner, so there is no
+        #       topological fingerprint; these are matched to their stored native
+        #       corner by snapping the extrapolated position to the nearest native
+        #       corner within a small fraction of the local spacing
+        #       (`SNAP_FRACTION`). This is the only place identity is inferred from
+        #       coordinates, and only for this genuinely under-determined residue.
         #   (b) points stored on NO face -- open-wall corners and the two coincident
         #       lips of a grid cut -- which get an extrapolated position (no
         #       identity) so the cut's coincident lips can later be merged by
@@ -756,11 +781,12 @@ class _OuterTopology:
         nat_xyz = _lonlat_to_xyz(nat_lon, nat_lat).reshape(-1, 3)
         nat_ok = np.isfinite(nat_xyz).all(axis=1)
 
-        # A genuine, physically distinct corner sits at least ~half a spacing away
-        # (measured minimum on LLC90: 0.5); a true coincidence lands within
-        # SNAP_FRACTION (measured maximum: 0.06 -- a ~6x margin). The band between
-        # is a "no man's land" that a well-posed grid never puts a two-cell fallback
-        # corner in: `_snap` returns the nearest native corner's index and, for a
+        # A genuine, physically distinct corner sits at least ~half a spacing away,
+        # while a true coincidence lands well within SNAP_FRACTION. (Measured on
+        # LLC90: the closest distinct corner is 0.5 spacings away and the farthest
+        # true coincidence 0.06 -- a ~6x margin.) The band between is a "no man's
+        # land" that a well-posed grid never puts a two-cell fallback corner in:
+        # `_snap` returns the nearest native corner's index and, for a
         # two-usable-cell slot, its distance ratio so the caller can raise if that
         # ratio is unexpectedly in the ambiguous band (see the raise below).
         DISTINCT_FRACTION = 0.5
@@ -823,8 +849,8 @@ class _OuterTopology:
                         # instead lands in the ambiguous band -- too far to match a
                         # native corner, too close to be a distinct one -- the
                         # geometry is pathological and silently demoting it to a wall
-                        # could drop real transport. Raise instead (this never fires
-                        # on LLC90; the fallback corners snap with a ~6x margin).
+                        # could drop real transport. Raise instead (on LLC90 this
+                        # never fires: its fallback corners snap with a ~6x margin).
                         if (usable4[f, J, I].sum() == 2
                                 and self.SNAP_FRACTION <= best_fail_ratio < DISTINCT_FRACTION):
                             raise ValueError(
@@ -948,15 +974,18 @@ class _OuterTopology:
                             by_cells3[ck] = a
 
         # Identity-less slots (points stored on no face) at the coincident lips of
-        # a grid cut are merged by *approximate* coincidence. The LLC90 southern
-        # domain is slit along the 65E/115W polar great circle: the mesh is cut
-        # open along that meridian pair under Antarctica, leaving coincident,
-        # reversed-index lips. Because the two lips are unconnected in
-        # `face_connections`, neither tile's cells enter the other's halo, so the
-        # coincidence carries NO shared tracer-cell signal -- it can only be seen
-        # from coordinates.
+        # a grid cut are merged by *approximate* coincidence. A cut is not declared
+        # in `face_connections` (see the class docstring), so neither lip's cells
+        # enter the other's halo: the coincidence carries NO shared tracer-cell
+        # signal and can only be seen from coordinates. A cut's two lips need not
+        # be uniform along its length -- part of a lip may have a native storage
+        # (and so real transport) while the rest is stored on no face at all -- and
+        # only the identity-less part is merged here; the stored part was already
+        # resolved above, by exact identity or by the two-cell coordinate fallback.
         #
-        # Along the 115W (tiles 9/12) side the lip is NOT uniform:
+        # LLC90 illustrates both. Its southern domain is slit under Antarctica
+        # along the 65E/115W polar great circle, leaving coincident,
+        # reversed-index lips. On the 115W (tiles 9/12) side:
         #  - Equatorward (lat ~ -88 to -80), tile-9 and tile-12 corners are each
         #    stored on no face. This step merges those coincident pairs, so the
         #    cut's two sides read as one wall for a region tracer. These are the

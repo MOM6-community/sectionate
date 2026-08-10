@@ -511,13 +511,77 @@ def test_rotated_seam_transport_streamfunction():
     assert np.isclose(abs(conv), abs(dpsi), rtol=1e-9)
 
 
-def test_north_fold_self_connection_raises():
+def test_face_glued_to_itself_raises():
+    """A face connected to itself is refused up front. Both sides of such a seam carry
+    the same face index, so a crossing looks exactly like an ordinary step within the
+    face -- nothing further down the pipeline notices, and a section is silently traced
+    as if the seam were not there. (A periodic axis or a north fold belongs in the axis
+    `padding` of a single-tile grid, which sectionate does support.)"""
     ng = 5
     lon = np.zeros((1, ng, ng)); lat = np.zeros((1, ng, ng))
     fc = {"face": {0: {"Y": ((0, "Y", True), (0, "Y", True))}}}
     grid = _make_grid(lon, lat, fc)
-    with pytest.raises(NotImplementedError):
+    with pytest.raises(NotImplementedError, match="glued to itself"):
         grid_section(grid, [0., 1.], [0., 1.])
+
+
+def test_unknown_neighbour_face_raises():
+    """A `face_connections` entry naming a face the grid does not have is refused with a
+    clear message, rather than failing obscurely inside xgcm's padding later on."""
+    grid = two_face_x_to_x()
+    grid._face_connections["face"][0]["X"] = (None, (7, "X", False))
+    with pytest.raises(ValueError, match="only has 2 faces"):
+        grid_section(grid, [10., 100.], [0., 0.])
+
+
+def test_one_sided_face_connection_raises():
+    """A seam declared from only one side is refused: the walk could cross it but never
+    step back, so the topology is not one sectionate can trace."""
+    grid = two_face_x_to_x()
+    grid._face_connections["face"][1]["X"] = (None, None)
+    with pytest.raises(ValueError, match="not mutual"):
+        grid_section(grid, [10., 100.], [0., 0.])
+
+
+def test_supported_multitile_topologies_pass_the_check():
+    """The front-door check must not reject topologies sectionate really does support --
+    including rotated seams (face 0's X axis glued to face 1's Y axis) and the real
+    13-tile lat-lon-cap connections, whose seams are mutual across different axes."""
+    import os, sys
+    from sectionate.section import _check_supported_topology
+
+    _check_supported_topology(two_face_x_to_x())
+    _check_supported_topology(rotated_two_face_streamfunction())
+
+    examples = os.path.abspath(
+        os.path.join(os.path.dirname(__file__), "..", "..", "examples")
+    )
+    if examples not in sys.path:
+        sys.path.insert(0, examples)
+    from load_example_ECCO_grid import LLC90_FACE_CONNECTIONS  # metadata only, no data
+
+    ng = 4
+    zeros = np.zeros((13, ng, ng))
+    llc90 = _make_grid(zeros, zeros.copy(), {"face": LLC90_FACE_CONNECTIONS["tile"]})
+    _check_supported_topology(llc90)
+
+
+def test_in_velocity_range_rejects_unknown_component():
+    """`_in_velocity_range` decides whether a velocity index exists in a face's own
+    arrays: in range for an edge stored on that face, out of range for one stored on the
+    face across the seam. It only ever sees the "U"/"V" components `_anchor_velocity`
+    produces, so anything else is a caller bug and is reported as one rather than
+    silently falling through to the "U" branch."""
+    from sectionate.transports import _in_velocity_range
+    ranges = {"Xc": 4, "Yc": 4, "Xq": 5, "Yq": 5}
+
+    assert _in_velocity_range("V", 3, 4, ranges)        # (X-center, Y-corner): both in range
+    assert not _in_velocity_range("V", 4, 4, ranges)    # past the end of the X-center axis
+    assert _in_velocity_range("U", 4, 3, ranges)        # (X-corner, Y-center): both in range
+    assert not _in_velocity_range("U", 4, 4, ranges)    # past the end of the Y-center axis
+    assert not _in_velocity_range("U", -1, 0, ranges)   # off the low end
+    with pytest.raises(ValueError, match="'U' or 'V'"):
+        _in_velocity_range("0", 0, 0, ranges)
 
 
 def test_save_load_roundtrip_preserves_face_indices(tmp_path):

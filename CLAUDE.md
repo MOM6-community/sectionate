@@ -4,14 +4,12 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-Sectionate is a Python package for sampling grid-consistent hydrographic sections from structured ocean model outputs (e.g. MOM6). It traces paths along C-grid velocity faces between geographic waypoints and computes transports/tracer values along those sections. Only structured grids are supported.
+Sectionate is a Python package for sampling grid-consistent hydrographic sections from structured ocean model outputs. It traces paths along C-grid velocity faces between geographic waypoints and computes transports/tracer values along those sections. It supports any structured model whose grid can be described by an `xgcm.Grid` object.
 
 ## Development Setup
 
 **One conda environment per branch/worktree, named `docs_env_sectionate_<branch-or-worktree-name>`.**
-Branches diverge in their dependencies — the xgcm floor in particular — so a single
-shared environment silently tests the wrong versions. Create it from
-`docs/environment.yml`, overriding the baked-in `name:` with `-n`:
+Create it from `docs/environment.yml`, overriding the baked-in `name:` with `-n`:
 
 ```bash
 ENV="docs_env_sectionate_$(git rev-parse --abbrev-ref HEAD)"
@@ -28,21 +26,14 @@ with `conda env remove -n "$ENV"` once the branch or worktree is gone.
 (`ci/environment.yml` is the minimal CI environment — pytest only, no plotting or
 notebook stack. It is not sufficient for the notebooks.)
 
-The environment must carry **xgcm >= 0.10.1**, which
-introduces the bipolar north fold (`padding={"Y": {"fold": ...}}`, formerly #711),
-the face-connection padding fix (#712), and the bare-`DataArray` `other_component`
-vector-pad fix (#749). It is a plain PyPI release, so `pip install -e .` pulls it in
-automatically (sectionate requires `xgcm>=0.10.1`). The ECCO example (notebook 5)
-pulls its data subset from Zenodo (concept DOI `10.5281/zenodo.21051424`) via stdlib
-`urllib` with MD5 checks — no `earthaccess`/Earthdata login needed.
-
 A correctly set up environment runs the full suite with **0 skips**. Skips mean one of
-two things: fold and multi-tile tests `skip` on `xgcm < 0.10.1`, and the ECCO LLC90 and
-MOM6-fold tests `skip` when their example data is absent from `data/`. In a fresh
-worktree the latter is the usual cause — `data/` holds ~1.4 GB of downloaded input that
-each checkout otherwise re-fetches. Symlink it from a checkout that already has it
-rather than downloading again (`data/*.nc` is gitignored, but `MOM5_global_example_grid.nc`
-is tracked, so link the individual files, not the directory):
+two things: fold and multi-tile tests `skip` on an xgcm older than the floor in
+`pyproject.toml`, and the ECCO LLC90 and MOM6-fold tests `skip` when their example data
+is absent from `data/`. In a fresh worktree the latter is the usual cause — `data/`
+holds ~1.4 GB of downloaded input that each checkout otherwise re-fetches. Symlink it
+from a checkout that already has it rather than downloading again (`data/*.nc` is
+gitignored, but `MOM5_global_example_grid.nc` is tracked, so link the individual files,
+not the directory):
 
 ```bash
 cd data && for f in /path/to/other/checkout/data/*.nc; do
