@@ -13,6 +13,8 @@ dependencies:
   - pytest
   - sphinx
   - nbsphinx
+  - myst-parser
   - pandoc
+  - ffmpeg
   - ipykernel
   - pip

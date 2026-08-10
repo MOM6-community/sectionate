@@ -65,6 +65,9 @@ instance/
 
 # Sphinx documentation
 docs/_build/
+# Generated on every build by conf.py's _sync_examples(), which copies
+# examples/*.ipynb in and rmtree's the directory first. Never hand-edited.
+docs/source/examples/
 
 # PyBuilder
 target/

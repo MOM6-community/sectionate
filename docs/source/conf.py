@@ -25,7 +25,8 @@ version = ".".join(release.split(".")[:2])
 # https://www.sphinx-doc.org/en/master/usage/configuration.html#general-configuration
 
 extensions = [
-    "nbsphinx"
+    "nbsphinx",
+    "myst_parser",  # renders the hand-written .md pages; nbsphinx keeps .ipynb
 ]
 
 templates_path = ['_templates']
