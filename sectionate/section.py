@@ -17,10 +17,27 @@ COINCIDENT_TOLERANCE_M = 1.e-3
 # index, so the path is independent of platform and of travel direction.
 WALK_DEVIATION_ATOL = 1.e-9
 
-# Angular tolerance, in degrees, for the well-posedness checks a section segment must
-# pass (`_check_segment_span`). It exists only to absorb floating-point round-off in the
-# waypoint coordinates: endpoints further apart than this really are distinct.
-SEGMENT_ATOL_DEG = 1.e-9
+# The three curves a section can be asked to follow. "latitude and great circle" is not a
+# curve in its own right: it resolves, segment by segment, to one of the other two (see
+# `_segment_curve`). `grid_section` documents what each one means.
+CURVES = ("great circle", "latitude circle", "latitude and great circle")
+
+# Angular tolerance, in degrees, for deciding whether a segment's two endpoints share a
+# latitude -- the classification that says whether a segment follows a parallel. About
+# 11 cm on Earth: five orders of magnitude finer than any grid cell, yet coarse enough to
+# absorb round-off in waypoints that have been through single precision (a float32
+# latitude is off by ~4.e-7 degrees, and model corner coordinates are commonly stored as
+# float32).
+CONSTANT_LATITUDE_ATOL_DEG = 1.e-6
+
+# Angular tolerance, in degrees, on the separation at which the two ways round a segment
+# are equally long. This is a different quantity from the classification tolerance above,
+# and it is deliberately tight: it catches endpoints *written* exactly half a circle
+# apart (lon 0 -> 180) and nothing else. A segment even slightly short of half a circle is
+# not ambiguous to the code -- which way round it runs is settled by the sign of the
+# round-off, so 0 -> 179.9999999 goes east and 0 -> 180.0000001 goes west -- so subdivide
+# such segments with an intermediate waypoint rather than relying on this check.
+HALF_CIRCLE_ATOL_DEG = 1.e-9
 
 class Section():
     """A named hydrographic section"""
@@ -267,19 +284,31 @@ def grid_section(grid, lons, lats, curve="great circle"):
     lats: list or np.ndarray
         Latitudes, in degrees (in range [-90, 90]), of consecutive vertices defining a piece-wise section.
     curve: str
-        Curve followed between consecutive vertices: "great circle" (default, the geodesic) or
-        "latitude circle" (constant latitude, marching in longitude).
+        Curve followed between consecutive vertices. One of:
 
-        Each segment follows the **shortest** path between its two vertices; raw longitudes
-        are never taken as a request to go the long way round, so a "latitude circle"
-        segment from 0 to 270 degrees runs 90 degrees *west*. Encircle the globe by giving
-        intermediate vertices (e.g. 0 -> 120 -> 240 -> 360), which is also what says which
-        way round it goes. A ValueError is raised only if a segment is ill posed: its
-        endpoints are exactly half a circle apart (so the shortest path is not unique), or
-        -- for "latitude circle" -- they are oblique, differing in both latitude and
-        longitude, so that no circle of constant latitude passes through them. Latitude-
-        circle segments must therefore be zonal (shared latitude) or meridional (shared
-        longitude); see `_check_segment_span`.
+        - "great circle" (default): every segment follows the geodesic.
+        - "latitude circle": every segment follows a circle of constant latitude, marching
+          in longitude. A segment whose endpoints do not share a latitude (to within
+          1.e-6 degrees) lies on no such circle, so it raises a ValueError -- meridional
+          segments included.
+        - "latitude and great circle": decided per segment. A segment whose endpoints
+          share a latitude follows the parallel; every other segment follows the geodesic.
+          This is the option for a section that is zonal in places and joined up by
+          meridional or slanted legs elsewhere.
+
+        Under every option each segment takes the **shortest** path between its two
+        vertices. Raw longitudes are never read as a request to go the long way round, so
+        a segment written 0 -> 270 along a parallel runs 90 degrees *west*. Encircle the
+        globe by giving intermediate vertices (e.g. 0 -> 120 -> 240 -> 360), which is also
+        what says which way round it goes.
+
+        A ValueError is also raised for a segment whose endpoints are written exactly half
+        a circle apart -- antipodal for a geodesic segment, or exactly +/-180 degrees of
+        longitude apart for one along a parallel -- because then neither way round is the
+        shorter. That check only catches endpoints typed as exactly half a circle apart:
+        a hair short of it, which way the segment runs is decided by the sign of the
+        round-off, so subdivide near-half-circle segments with an intermediate vertex
+        rather than expecting to be warned about them.
 
     Returns
     -------
@@ -367,12 +396,10 @@ def create_section_composite(
         (single- or multi-tile). Sections are always built from an `xgcm.Grid`, so these
         are always supplied; the usual entry point is `sectionate.grid_section`.
     curve: str
-        Curve followed between consecutive vertices: "great circle" (default, the geodesic)
-        or "latitude circle" (constant latitude, marching in longitude). Every segment
-        follows the shortest path between its two vertices, so a piece-wise section that
-        encircles the globe needs intermediate vertices (e.g. 0 -> 120 -> 240 -> 360) --
-        both to go the long way round and to say which way round. Each segment is checked
-        by `_check_segment_span`, whose docstring gives the full contract.
+        Curve followed between consecutive vertices: "great circle" (default),
+        "latitude circle", or "latitude and great circle". Each segment is resolved and
+        checked independently; `sectionate.grid_section` documents what the three options
+        mean and which segments they reject.
 
     RETURNS:
     -------
@@ -484,58 +511,69 @@ def _wrapped_dlon(lon1, lon2):
     return (lon2 - lon1 + 180.) % 360. - 180.
 
 
-def _check_segment_span(lon1, lat1, lon2, lat2, curve):
-    """Raise if the segment between two consecutive waypoints is not well posed.
+def _is_constant_latitude(lat1, lat2):
+    """Whether a segment's two endpoint latitudes agree, and so lie on one parallel.
 
-    Sectionate always follows the **shortest** path between consecutive waypoints, for
-    both curve types. Raw coordinates are never read as an instruction to take the long
-    way round: a ``curve="latitude circle"`` segment written 0 -> 270 degrees travels 90
-    degrees *west*, not 270 degrees east, exactly as a great-circle segment would. To go
-    the long way round, say so with intermediate waypoints (e.g. 0 -> 120 -> 240 -> 360).
-
-    Two things can still leave a segment ill posed:
-
-    1. **The shortest path is not unique.** This happens only when the endpoints are
-       exactly half a circle apart -- antipodal under "great circle" (infinitely many
-       geodesics join them), or exactly +/-180 degrees of longitude apart under
-       "latitude circle" (east and west are equally far). A single ambiguity error
-       covers both curves. Split such a segment with an intermediate waypoint.
-    2. **The requested curve does not pass through both endpoints.** For "latitude
-       circle" only: a circle of constant latitude through both endpoints exists only if
-       they share a latitude. Segments that instead share a longitude are also accepted
-       -- these are the meridional connectors that join zonal arcs at different
-       latitudes, and a meridian is unambiguous. An *oblique* segment, differing in both
-       latitude and longitude, lies on no latitude circle; use ``curve="great circle"``
-       for it, or split it into a zonal leg and a meridional leg.
+    The single classification used both to accept or reject a "latitude circle" segment
+    and to pick the metrics a segment is walked with, so those two can never disagree.
     """
-    if curve == "latitude circle":
-        # Signed shortest-way-round longitude change. It is also the separation that
-        # decides ambiguity, because a latitude-circle segment travels only in longitude.
-        dlon = _wrapped_dlon(lon1, lon2)
-        zonal = abs(lat2 - lat1) <= SEGMENT_ATOL_DEG
-        meridional = abs(dlon) <= SEGMENT_ATOL_DEG
-        if not (zonal or meridional):
-            raise ValueError(
-                f"Latitude-circle segment from (lon={lon1}, lat={lat1}) to "
-                f"(lon={lon2}, lat={lat2}) is oblique: its endpoints differ in both "
-                "latitude and longitude, so no circle of constant latitude passes "
-                "through them. Use curve='great circle' for oblique segments, or split "
-                "this one into a zonal leg (same latitude) and a meridional leg (same "
-                "longitude)."
-            )
-        # A meridional segment runs along a single meridian, so `dlon` is 0 and the
-        # ambiguity test below is trivially passed: there is no east/west choice to make.
-        sep = abs(dlon)
+    return abs(lat2 - lat1) <= CONSTANT_LATITUDE_ATOL_DEG
+
+
+def _segment_curve(lat1, lat2, curve):
+    """The curve one segment actually follows: always "great circle" or "latitude circle".
+
+    Resolves the section-wide `curve` request (one of `CURVES`) for a single segment, and
+    raises ValueError if it is not a recognized request. Passing an already-resolved value
+    returns it unchanged, so this is safe to apply more than once along a call chain.
+    """
+    if curve in ("great circle", "latitude circle"):
+        return curve
+    if curve == "latitude and great circle":
+        return "latitude circle" if _is_constant_latitude(lat1, lat2) else "great circle"
+    raise ValueError(
+        f"curve must be one of {', '.join(repr(c) for c in CURVES)}; got {curve!r}."
+    )
+
+
+def _check_segment_span(lon1, lat1, lon2, lat2, curve):
+    """Validate one section segment and return the curve it follows.
+
+    `curve` is the section-wide request; the return value is what it resolves to for this
+    segment, either "great circle" or "latitude circle". Raises ValueError if the segment
+    is ill posed under `curve` -- see `sectionate.grid_section` for the rules and for what
+    to write instead.
+    """
+    segment_curve = _segment_curve(lat1, lat2, curve)
+
+    if curve == "latitude circle" and not _is_constant_latitude(lat1, lat2):
+        raise ValueError(
+            f"Segment from (lon={lon1}, lat={lat1}) to (lon={lon2}, lat={lat2}) does not "
+            f"follow a circle of constant latitude: its endpoints differ in latitude by "
+            f"{abs(lat2 - lat1)} degrees. Use curve='latitude and great circle' to follow "
+            "the parallel where the endpoints do share a latitude and the geodesic "
+            "everywhere else, or curve='great circle' throughout."
+        )
+
+    if segment_curve == "latitude circle":
+        # A segment along a parallel travels only in longitude, so the separation that
+        # decides ambiguity is the shortest-way-round longitude change -- degrees of
+        # longitude, which near the poles is a far larger number than the arc it spans.
+        sep = abs(_wrapped_dlon(lon1, lon2))
+        measure = "degrees of longitude along the parallel"
     else:
         sep = np.rad2deg(distance_on_unit_sphere(lon1, lat1, lon2, lat2, R=1.))
+        measure = "degrees of arc"
 
-    if sep >= 180. - SEGMENT_ATOL_DEG:
+    if sep >= 180. - HALF_CIRCLE_ATOL_DEG:
         raise ValueError(
             f"Segment from (lon={lon1}, lat={lat1}) to (lon={lon2}, lat={lat2}) has "
-            f"endpoints half a circle apart (separation ~{sep:.4f} degrees), so the two "
-            "ways round are equally short and the shortest path between them is not "
-            "unique. Add an intermediate waypoint to say which way the section goes."
+            f"endpoints half a circle apart ({sep:.4f} {measure}), so neither way round "
+            "is the shorter and there is no shortest path to take. Add an intermediate "
+            "waypoint to say which way the section goes."
         )
+
+    return segment_curve
 
 
 def infer_grid_path_from_geo(lonstart, latstart, lonend, latend, gridlon, gridlat, neighbor_maps, curve="great circle"):
@@ -572,7 +610,12 @@ def infer_grid_path_from_geo(lonstart, latstart, lonend, latend, gridlon, gridla
         (lons_c, lats_c) are the corresponding longitude and latitudes.
     """
 
-    _check_segment_span(lonstart, latstart, lonend, latend, curve)
+    # This function is called once per segment, so it is where the section-wide `curve`
+    # request becomes the one curve this segment follows. Resolve it here, from the
+    # *requested* waypoints, rather than leaving it to `infer_grid_path`, which sees only
+    # the grid corners the waypoints snap to -- and whose latitudes can differ from the
+    # requested ones by up to half a cell.
+    segment_curve = _check_segment_span(lonstart, latstart, lonend, latend, curve)
 
     multitile = np.ndim(gridlon) == 3
     if multitile:
@@ -591,7 +634,7 @@ def infer_grid_path_from_geo(lonstart, latstart, lonend, latend, gridlon, gridla
         gridlon,
         gridlat,
         neighbor_maps=neighbor_maps,
-        curve=curve,
+        curve=segment_curve,
         f1=fstart,
         f2=fend,
     )
@@ -625,6 +668,10 @@ def infer_grid_path(i1, j1, i2, j2, gridlon, gridlat, neighbor_maps, f1=None, f2
         them -- typically via `sectionate.grid_section`.
     f1, f2: integer or None
         Face indices of the starting and ending points (multi-tile grids only); None otherwise.
+    curve: str
+        Curve this segment follows; see `sectionate.grid_section`. "latitude and great
+        circle" resolves here from the two endpoint corners' latitudes, since this entry
+        point is given indices rather than requested waypoints.
 
     RETURNS:
     -------
@@ -669,6 +716,11 @@ def infer_grid_path(i1, j1, i2, j2, gridlon, gridlat, neighbor_maps, f1=None, f2
     lon1, lat1 = coord(gridlon, f1, j1, i1), coord(gridlat, f1, j1, i1)
     lon2, lat2 = coord(gridlon, f2, j2, i2), coord(gridlat, f2, j2, i2)
 
+    # Which curve this segment follows. `infer_grid_path_from_geo` has normally resolved
+    # it already, from the requested waypoints; resolving again here is a no-op for it and
+    # makes all three `CURVES` usable when this function is called directly with indices.
+    segment_curve = _segment_curve(lat1, lat2, curve)
+
     # Per-curve metrics used by the deterministic neighbor selection below.
     #  - progress(lon, lat): remaining distance to the segment endpoint (smaller = nearer);
     #    admits only neighbors that do not move away from the endpoint.
@@ -678,25 +730,16 @@ def infer_grid_path(i1, j1, i2, j2, gridlon, gridlat, neighbor_maps, f1=None, f2
     #    for both curve types so WALK_DEVIATION_ATOL is meaningful for both.
     # Physical coincidence with the endpoint (the seam-twin stop) always uses true geodesic
     # distance, independent of `curve`.
-    if curve == "great circle":
+    if segment_curve == "great circle":
         def progress(lon, lat):
             return distance_on_unit_sphere(lon, lat, lon2, lat2)
         def deviation(lon, lat):
             return (spherical_angle(lon2, lat2, lon1, lat1, lon, lat)
                     + spherical_angle(lon1, lat1, lon2, lat2, lon, lat))
-    elif curve == "latitude circle":
-        # These two metrics measure progress purely in longitude and deviation purely in
-        # latitude, which is exactly right for the two segment shapes `_check_segment_span`
-        # admits for this curve, and for nothing else:
-        #  - a *zonal* segment (endpoints on one parallel) marches in longitude at constant
-        #    latitude, which is what `progress` drives and `deviation` holds it to;
-        #  - a *meridional* segment (endpoints on one meridian) has lon2 == lon1, so
-        #    `progress` is flat and admits no neighbor. The walk then falls through to the
-        #    "no admissible forward move" branch below, which steps to the neighbor
-        #    geodesically closest to the endpoint -- i.e. straight down the meridian.
-        # An oblique segment would instead walk zonally along the *start* latitude and only
-        # then close the latitude gap, an L-shaped path that depends on which end you start
-        # from; `_check_segment_span` rejects those up front rather than tracing one.
+    else:   # "latitude circle" -- the only other value `_segment_curve` returns
+        # Progress purely in longitude, deviation purely in latitude: the metrics of a
+        # march along a parallel, and meaningful only for a segment whose endpoints share
+        # a latitude. Segments that do not are never resolved to this curve.
         def progress(lon, lat):
             # sin^2(delta-lon/2) is the haversine of the longitude gap: periodic in 360
             # degrees and monotonic in |delta-lon| up to 180, so it measures the *shortest*
@@ -708,10 +751,6 @@ def infer_grid_path(i1, j1, i2, j2, gridlon, gridlat, neighbor_maps, f1=None, f2
             # (radians). Flat between the two endpoint latitudes, which absorbs the
             # sub-cell mismatch left when each endpoint snaps to its nearest grid corner.
             return np.deg2rad(abs(lat - lat1)) + np.deg2rad(abs(lat - lat2))
-    else:
-        raise ValueError(
-            f"curve must be 'great circle' or 'latitude circle'; got {curve!r}."
-        )
 
     def order_key(pt):
         _f, _j, _i = pt

@@ -82,10 +82,16 @@ def test_steep_and_shallow_oblique_sections_reversible():
                                 np.array([-7.0, -5.0, -3.0, -1.0]))  # shallow
 
 
-def test_oblique_latitude_circle_segments_reversible():
+def test_zonal_and_meridional_segments_reversible():
     grid = _fine_grid(seed=5)
-    # Latitude-circle segments (constant-latitude hops at two different latitudes,
-    # connected by a meridional step) must also reverse exactly.
+    # Constant-latitude hops at two different latitudes, joined by a meridional step.
+    # Under "latitude and great circle" the two zonal legs follow their parallels and the
+    # meridional leg follows the geodesic; both metrics must reverse exactly, and so must
+    # the per-segment choice between them.
     lon = np.array([2.0, 10.0, 10.0, 20.0])
     lat = np.array([-6.0, -6.0, 4.0, 4.0])
-    _assert_reverse_equal(grid, lon, lat, curve="latitude circle")
+    _assert_reverse_equal(grid, lon, lat, curve="latitude and great circle")
+
+    # A purely zonal section reverses exactly under "latitude circle" too.
+    _assert_reverse_equal(grid, np.array([2.0, 10.0, 20.0]), np.array([-6.0, -6.0, -6.0]),
+                          curve="latitude circle")
