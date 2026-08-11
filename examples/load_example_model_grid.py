@@ -23,6 +23,17 @@ def load_MOM6_example_grid():
     coords={
         'X': {'center': 'xh', 'outer': 'xq'},
         'Y': {'center': 'yh', 'outer': 'yq'},
+        # Sections are only ever traced horizontally, so the vertical axis plays no part
+        # in that -- but declaring it is what lets `convergent_transport` label its output
+        # with the layer interfaces ("sigma2_i") that go with the layers the transports
+        # are resolved over ("sigma2_l").
+        'Z': {'center': 'sigma2_l', 'outer': 'sigma2_i'},
     }
-    grid = xgcm.Grid(ds, coords=coords, boundary={"X":"periodic", "Y":"extend"}, autoparse_metadata=False)
+    # This is a global tripolar grid: zonally periodic, with a bipolar north fold along
+    # its top edge. Declaring the fold (xgcm >= the bipolar-fold release) lets sectionate
+    # trace sections across the Arctic seam. (Sections that stay south of the fold behave
+    # identically to padding={"Y": "extend"}.)
+    grid = xgcm.Grid(ds, coords=coords,
+                     padding={"X": "periodic", "Y": {"fold": "corner"}},
+                     autoparse_metadata=False)
     return grid

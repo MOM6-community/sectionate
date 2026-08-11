@@ -3,23 +3,158 @@ import numpy as np
 import xarray as xr
 import dask
 
-from .gridutils import check_symmetric, coord_dict, get_geo_corners
-from .section import distance_on_unit_sphere
+from .gridutils import (
+    corner_offset, coord_dict, get_geo_corners, get_facedim, build_neighbor_maps,
+    outer_topology, NEIGHBOR_DIRECTIONS,
+)
+from .section import distance_on_unit_sphere, COINCIDENT_TOLERANCE_M
 
-def uvindices_from_qindices(grid, i_c, j_c):
+
+def _edge_direction(A, neighbor_maps):
+    """Return a function mapping a neighbor point to the direction (right/left/up/down)
+    that reaches it from A=(f,j,i), or None if it is not a neighbor of A."""
+    f, j, i = A
+    out = {}
+    for d in NEIGHBOR_DIRECTIONS:
+        fm, jm, im = neighbor_maps[d]
+        out[(int(fm[f, j, i]), int(jm[f, j, i]), int(im[f, j, i]))] = d
+    return out
+
+
+# velocity (var, index-offset) for the section edge leaving corner (i,j) in each
+# local direction, on an 'outer' C-grid. V (vmo) lives at (X-center, Y-corner);
+# U (umo) at (X-corner, Y-center).
+_EDGE_VEL = {
+    "right": ("V", 0, 0),   # vmo at (center i,   corner j)
+    "left":  ("V", -1, 0),  # vmo at (center i-1, corner j)
+    "up":    ("U", 0, 0),   # umo at (corner i,   center j)
+    "down":  ("U", 0, -1),  # umo at (corner i,   center j-1)
+}
+
+
+def _in_velocity_range(var, vi, vj, ranges):
+    """
+    Whether the velocity index (vi, vj) is one that a face's own arrays actually hold.
+
+    `_anchor_velocity` builds a section edge's velocity index by offsetting the corner the
+    edge leaves from. Read in the frame of the face that corner belongs to, an edge that
+    stays inside that face always lands on a stored velocity. An edge that crosses a seam,
+    however, is stored on at most ONE of the two faces it touches: read in the other face's
+    frame the same edge produces an index that falls outside that face's array -- past its
+    high end, or negative. `_uv_for_edge` uses this check to tell the two apart, taking the
+    source face's index when it is in range and otherwise the destination face's, so a
+    velocity is always read in the frame of the face that stores it and never has to be
+    rotated across the seam.
+
+    "At most one" because a staggered tiling can also leave a seam edge stored on NEITHER
+    face -- a crossing through a corner the faces share but neither one stores. Such an edge
+    is out of range in both frames, which is `_uv_for_edge`'s third branch: it is degenerate
+    and carries no flux.
+
+    `ranges` holds a face's array lengths along each axis: "Xc"/"Yc" for the tracer-center
+    axes and "Xq"/"Yq" for the corner axes. A "V" (Y-direction) velocity sits at
+    (X-center, Y-corner) and a "U" (X-direction) velocity at (X-corner, Y-center).
+    """
+    if var == "V":  # vmo at (X-center, Y-corner)
+        return (0 <= vi < ranges["Xc"]) and (0 <= vj < ranges["Yq"])
+    if var == "U":  # umo at (X-corner, Y-center)
+        return (0 <= vi < ranges["Xq"]) and (0 <= vj < ranges["Yc"])
+    raise ValueError(f"velocity component must be 'U' or 'V', got {var!r}")
+
+
+def _anchor_velocity(d, f, j, i, offset):
+    """Staggered velocity index for the section edge leaving corner (f,j,i) in direction d,
+    read in face f's own frame. `offset` is the corner->velocity index shift from
+    `gridutils.corner_offset` (0 for 'outer'/'left', 1 for 'right'). Returns (var, vi, vj)."""
+    var, di, dj = _EDGE_VEL[d]
+    vi, vj = i + di, j + dj
+    vi, vj = (vi + offset, vj) if var == "V" else (vi, vj + offset)
+    return var, vi, vj
+
+
+def _local_vec(lon0, lat0, lon1, lat1):
+    """Displacement (point0 -> point1) in a local flat (east, north) frame, in degrees,
+    with longitudes scaled by cos(lat) and wrapped across the dateline."""
+    dlon = ((lon1 - lon0 + 180.0) % 360.0) - 180.0
+    return dlon * np.cos(np.deg2rad(0.5 * (lat0 + lat1))), (lat1 - lat0)
+
+
+def _left_sign(var, fv, jc, ic, A, B, glon, glat):
+    """
+    +1 if the stored velocity's positive direction points to the LEFT of the section's
+    direction of travel (A -> B), else -1. Computed from geography, so it stays consistent
+    across faces however the grid is rotated underneath -- which is what makes seam-crossing
+    (including rotated) transports orient correctly without a single global flip.
+
+    `var` is "U"/"V"; (fv, jc, ic) is the section corner on the velocity's own face, used to
+    read the velocity's positive (face +x for U, +y for V) direction from the corner positions.
+    """
+    fA, jA, iA = A
+    fB, jB, iB = B
+    tx, ty = _local_vec(glon[fA, jA, iA], glat[fA, jA, iA], glon[fB, jB, iB], glat[fB, jB, iB])
+    ny, nx = glon.shape[-2], glon.shape[-1]
+    if var == "U":   # umo positive -> face +x
+        i1, i2 = (ic, ic + 1) if ic + 1 < nx else (ic - 1, ic)
+        vx, vy = _local_vec(glon[fv, jc, i1], glat[fv, jc, i1], glon[fv, jc, i2], glat[fv, jc, i2])
+    else:            # vmo positive -> face +y
+        j1, j2 = (jc, jc + 1) if jc + 1 < ny else (jc - 1, jc)
+        vx, vy = _local_vec(glon[fv, j1, ic], glat[fv, j1, ic], glon[fv, j2, ic], glat[fv, j2, ic])
+    return 1 if (tx * vy - ty * vx) > 0 else -1  # cross(travel, vdir) > 0  <=>  vdir is left
+
+
+def _uv_for_edge(A, B, neighbor_maps, offset, ranges, glon, glat):
+    """
+    Velocity face for the directed section edge from corner A=(fA,jA,iA) to B=(fB,jB,iB).
+    Returns (var, i, j, face, Lsign), where Lsign is +1 if the stored velocity's positive
+    direction points left of travel (a geographic sign -- see `_left_sign`); var is "0" for a
+    degenerate edge that carries no flux.
+
+    The velocity index is read in a single face's frame, so no velocity is rotated across the
+    seam: the SOURCE face when the edge's normal velocity lives there (the usual case, and where
+    a rotated connection needs no rotation since the edge is a normal X/Y edge on that face);
+    otherwise the DESTINATION face (e.g. the trailing edge of a crossing whose normal velocity
+    lives there); otherwise the edge is degenerate (a crossing through a shared boundary corner
+    of an 'outer' tiling). The sign is always geographic, so rotated seams orient correctly.
+    """
+    fA, jA, iA = A
+    fB, jB, iB = B
+    d = _edge_direction(A, neighbor_maps)[B]
+    seam = fA != fB
+
+    # 1. source-frame velocity (always valid within a face)
+    var_s, vi_s, vj_s = _anchor_velocity(d, fA, jA, iA, offset)
+    if not seam or _in_velocity_range(var_s, vi_s, vj_s, ranges):
+        Lsign = _left_sign(var_s, fA, jA, iA, A, B, glon, glat)
+        return var_s, int(vi_s), int(vj_s), int(fA), Lsign
+
+    # 2. destination-frame velocity (the edge sits on B's d2-side)
+    d2 = _edge_direction(B, neighbor_maps)[A]  # direction from B back to A
+    var_d, vi_d, vj_d = _anchor_velocity(d2, fB, jB, iB, offset)
+    if _in_velocity_range(var_d, vi_d, vj_d, ranges):
+        Lsign = _left_sign(var_d, fB, jB, iB, A, B, glon, glat)
+        return var_d, int(vi_d), int(vj_d), int(fB), Lsign
+
+    # 3. degenerate crossing through a shared boundary corner -- carries no flux.
+    return "0", 0, 0, int(fB), 0
+
+
+def uvindices_from_qindices(grid, i_c, j_c, f_c=None):
     """
     Find the `grid` indices of the N-1 velocity points defined by the consecutive indices of
-    N vorticity points. Follows MOM6 conventions (https://mom6.readthedocs.io/en/main/api/generated/pages/Horizontal_Indexing.html),
-    automatically checking `grid` metadata to determine whether the grid is symmetric or non-symmetric.
+    N vorticity points, automatically reading the vorticity corner position from `grid`
+    metadata ('outer', 'right', or 'left'; see `gridutils.corner_offset`).
 
     PARAMETERS:
     -----------
     grid: xgcm.Grid
         Grid object describing ocean model grid and containing data variables
     i_c: int
-        vorticity point indices along "X" dimension 
+        vorticity point indices along "X" dimension
     j_c: int
         vorticity point indices along "Y" dimension
+    f_c: array of int or None
+        Face indices of the vorticity points for multi-tile grids (`face_connections`);
+        None for single-tile grids.
 
     RETURNS:
     --------
@@ -28,37 +163,106 @@ def uvindices_from_qindices(grid, i_c, j_c):
           - "var" : "U" if corresponding to "X"-direction velocity (usually nominally zonal), "V" otherwise
           - "i" : "X"-dimension index of appropriate "U" or "V" velocity
           - "j" : "Y"-dimension index of appropriate "U" or "V" velocity
-          - "nward" : True if point was passed through while going in positive "j"-index direction
-          - "eward" : True if point was passed through while going in positive "i"-index direction
+          - "Yinc" : True if point was passed through while going in positive "j"-index direction
+          - "Xinc" : True if point was passed through while going in positive "i"-index direction
+        For multi-tile grids (`f_c` given) the dict additionally contains:
+          - "face" : face index of the velocity point
+          - "Lsign" : +1 if the velocity's positive direction points left of the section's
+            direction of travel, else -1 (a geometric sign that stays consistent across
+            rotated face seams; used in place of "Xinc"/"Yinc").
     """
-    nsec = len(i_c)
+    i_c = np.asarray(i_c)
+    j_c = np.asarray(j_c)
+    offset = corner_offset(grid)
+    geocorners = get_geo_corners(grid)
+    glon = np.asarray(geocorners["X"].values)
+    glat = np.asarray(geocorners["Y"].values)
+
+    if f_c is not None:
+        # Resolve each corner to its canonical native representation on the
+        # grid's corner topology, dropping consecutive corners that are the
+        # same physical point. Sections saved before multi-tile paths became
+        # twin-free step through both native copies of a shared seam corner:
+        # that zero-length edge is not a velocity face, and the neighbor maps
+        # used below link only canonical representations.
+        ot = outer_topology(grid)
+        f_c = np.asarray(f_c)
+        nodes = ot.node_id[f_c, j_c + ot.t, i_c + ot.t]
+        if (nodes < 0).any():
+            raise ValueError("Section contains indices that are not grid corners.")
+        keep = np.ones(nodes.size, dtype=bool)
+        keep[1:] = nodes[1:] != nodes[:-1]
+        nat = ot.node_native[nodes[keep]]
+        f_c, j_c, i_c = nat[:, 0].copy(), nat[:, 1].copy(), nat[:, 2].copy()
+
+    nsec = i_c.size
     uvindices = {
         "var":np.zeros(nsec-1, dtype="<U2"),
         "i":np.zeros(nsec-1, dtype=np.int64),
         "j":np.zeros(nsec-1, dtype=np.int64),
-        "nward":np.zeros(nsec-1, dtype=bool),
-        "eward":np.zeros(nsec-1, dtype=bool)
+        "Yinc":np.zeros(nsec-1, dtype=bool),
+        "Xinc":np.zeros(nsec-1, dtype=bool)
     }
-    symmetric = check_symmetric(grid)
-    for k in range(0, nsec-1):
-        zonal = not(j_c[k+1] != j_c[k])
-        eward = i_c[k+1] > i_c[k]
-        nward = j_c[k+1] > j_c[k]
-        # Handle corner cases for wrapping boundaries
-        if (i_c[k+1] - i_c[k])>1: eward = False
-        elif (i_c[k+1] - i_c[k])<-1: eward = True
-        uvindex = {
-            "var": "V" if zonal else "U", 
-            "i": i_c[k+(1 if not(eward) and zonal else 0)],
-            "j": j_c[k+(1 if not(nward) and not(zonal) else 0)],
-            "nward": nward,
-            "eward": eward,
+
+    if f_c is not None:
+        f_c = np.asarray(f_c)
+        # Multi-tile grid: attribute each section edge's velocity face by the
+        # inside-cell / dual-anchor rule, which handles face seams (see `_uv_for_edge`).
+        # The transport sign is carried geometrically in "Lsign" (+1 if the velocity's
+        # positive direction points left of travel) so that it stays consistent across
+        # rotated faces -- unlike the face-frame "Xinc"/"Yinc" used for single-tile grids.
+        coords = coord_dict(grid)
+        ranges = {
+            "Xc": grid._ds[coords["X"]["center"]].size,
+            "Yc": grid._ds[coords["Y"]["center"]].size,
+            "Xq": grid._ds[coords["X"]["corner"]].size,
+            "Yq": grid._ds[coords["Y"]["corner"]].size,
         }
-        uvindex["i"] += (1 if not(symmetric) and zonal else 0)
-        uvindex["j"] += (1 if not(symmetric) and not(zonal) else 0)
-        for (key, v) in uvindices.items():
-            v[k] = uvindex[key]
-    return uvindices
+        uvindices["face"] = np.zeros(nsec-1, dtype=np.int64)
+        uvindices["Lsign"] = np.zeros(nsec-1, dtype=np.int64)
+        neighbor_maps = build_neighbor_maps(grid, geocorners)
+        for k in range(0, nsec-1):
+            A = (int(f_c[k]), int(j_c[k]), int(i_c[k]))
+            B = (int(f_c[k+1]), int(j_c[k+1]), int(i_c[k+1]))
+            var, vi, vj, face, Lsign = _uv_for_edge(A, B, neighbor_maps, offset, ranges, glon, glat)
+            uvindices["var"][k] = var
+            uvindices["i"][k] = vi
+            uvindices["j"][k] = vj
+            uvindices["face"][k] = face
+            uvindices["Lsign"][k] = Lsign
+    else:
+        for k in range(0, nsec-1):
+            zonal = not(j_c[k+1] != j_c[k])
+            Xinc = i_c[k+1] > i_c[k]
+            Yinc = j_c[k+1] > j_c[k]
+            # Handle corner cases for wrapping boundaries
+            if (i_c[k+1] - i_c[k])>1: Xinc = False
+            elif (i_c[k+1] - i_c[k])<-1: Xinc = True
+            uvindex = {
+                "var": "V" if zonal else "U",
+                "i": i_c[k+(1 if not(Xinc) and zonal else 0)],
+                "j": j_c[k+(1 if not(Yinc) and not(zonal) else 0)],
+                "Yinc": Yinc,
+                "Xinc": Xinc,
+            }
+            uvindex["i"] += (offset if zonal else 0)
+            uvindex["j"] += (offset if not(zonal) else 0)
+            for (key, v) in uvindices.items():
+                v[k] = uvindex[key]
+
+    # Drop zero-length faces. A single physical corner can carry two indices -- at a
+    # periodic seam, a shared multi-tile boundary corner, or the bipolar fold seam -- so
+    # the section path can contain a consecutive pair whose endpoints are the same point.
+    # That edge spans no grid cell and carries no flux, so it is not a velocity face. Both
+    # corners are kept (they anchor the real faces on either side), but the degenerate edge
+    # between them emits no face. Done here, in the deterministic corner->face derivation,
+    # so it applies identically when a saved section is reloaded from its (i_c, j_c[, f_c]).
+    if f_c is not None:
+        clon, clat = glon[f_c, j_c, i_c], glat[f_c, j_c, i_c]
+    else:
+        clon, clat = glon[j_c, i_c], glat[j_c, i_c]
+    keep = distance_on_unit_sphere(clon[:-1], clat[:-1], clon[1:], clat[1:]) > COINCIDENT_TOLERANCE_M
+    return {key: np.asarray(val)[keep] for key, val in uvindices.items()}
 
 def uvcoords_from_uvindices(grid, uvindices):
     """
@@ -75,8 +279,8 @@ def uvcoords_from_uvindices(grid, uvindices):
           - "var" : "U" if corresponding to "X"-direction velocity (usually nominally zonal), "V" otherwise
           - "i" : "X"-dimension index of appropriate "U" or "V" velocity
           - "j" : "Y"-dimension index of appropriate "U" or "V" velocity
-          - "nward" : True if point was passed through while going in positive "j"-index direction
-          - "eward" : True if point was passed through while going in positive "i"-index direction
+          - "Yinc" : True if point was passed through while going in positive "j"-index direction
+          - "Xinc" : True if point was passed through while going in positive "i"-index direction
 
     RETURNS:
     --------
@@ -109,26 +313,39 @@ def uvcoords_from_uvindices(grid, uvindices):
                    (coords["Y"]["corner"] in ds[c].coords))
                if d in c}.items()}
 
+    facedim = get_facedim(grid)
+    faces = uvindices.get("face")
+
     for p in range(len(uvindices["var"])):
         var, i, j = uvindices["var"][p], uvindices["i"][p], uvindices["j"][p]
+        if var not in ("U", "V"):
+            # Degenerate edge (e.g. a seam crossing through a shared corner): no point.
+            lons[p], lats[p] = np.nan, np.nan
+            continue
+        # On multi-tile grids, also select the velocity point's face.
+        fsel = {facedim: int(faces[p])} if (facedim is not None and faces is not None) else {}
         if var == "U":
             if (f"geolon_u" in u_names) and (f"geolat_u" in u_names):
                 lon = ds[u_names[f"geolon_u"]].isel({
                     coords["X"]["corner"]:i,
-                    coords["Y"]["center"]:j
+                    coords["Y"]["center"]:j,
+                    **fsel
                 }).values
                 lat = ds[u_names[f"geolat_u"]].isel({
                     coords["X"]["corner"]:i,
-                    coords["Y"]["center"]:j
+                    coords["Y"]["center"]:j,
+                    **fsel
                 }).values
             elif (f"geolon_corner" in corner_names) and (f"geolat_center" in center_names):
                 lon = ds[corner_names[f"geolon_corner"]].isel({
                     coords["X"]["corner"]:i,
-                    coords["Y"]["corner"]:j
+                    coords["Y"]["corner"]:j,
+                    **fsel
                 }).values
                 lat = ds[center_names[f"geolat_center"]].isel({
                     coords["X"]["center"]:wrap_idx(i, grid, "X"),
-                    coords["Y"]["center"]:wrap_idx(j, grid, "Y")
+                    coords["Y"]["center"]:wrap_idx(j, grid, "Y"),
+                    **fsel
                 }).values
             else:
                 raise ValueError("Cannot locate grid coordinates necessary to\
@@ -137,20 +354,24 @@ def uvcoords_from_uvindices(grid, uvindices):
             if (f"geolon_v" in v_names) and (f"geolat_v" in v_names):
                 lon = ds[v_names[f"geolon_v"]].isel({
                     coords["X"]["center"]:wrap_idx(i, grid, "X"),
-                    coords["Y"]["corner"]:j
+                    coords["Y"]["corner"]:j,
+                    **fsel
                 }).values
                 lat = ds[v_names[f"geolat_v"]].isel({
                     coords["X"]["center"]:wrap_idx(i, grid, "X"),
-                    coords["Y"]["corner"]:j
+                    coords["Y"]["corner"]:j,
+                    **fsel
                 }).values
             elif (f"geolon_center" in center_names) and (f"geolat_corner" in corner_names):
                 lon = ds[center_names[f"geolon_center"]].isel({
                     coords["X"]["center"]:wrap_idx(i, grid, "X"),
-                    coords["Y"]["center"]:wrap_idx(j, grid, "Y")
+                    coords["Y"]["center"]:wrap_idx(j, grid, "Y"),
+                    **fsel
                 }).values
                 lat = ds[corner_names[f"geolat_corner"]].isel({
                     coords["X"]["corner"]:i,
-                    coords["Y"]["corner"]:j
+                    coords["Y"]["corner"]:j,
+                    **fsel
                 }).values
             else:
                 raise ValueError("Cannot locate grid coordinates necessary to\
@@ -159,7 +380,7 @@ def uvcoords_from_uvindices(grid, uvindices):
         lats[p] = lat
     return lons, lats
     
-def uvcoords_from_qindices(grid, i_c, j_c):
+def uvcoords_from_qindices(grid, i_c, j_c, f_c=None):
     """
     Directly finds coordinates of velocity points from vorticity point indices, wrapping other functions.
 
@@ -168,9 +389,11 @@ def uvcoords_from_qindices(grid, i_c, j_c):
     grid: xgcm.Grid
         Grid object describing ocean model grid and containing data variables
     i_c: int
-        vorticity point indices along "X" dimension 
+        vorticity point indices along "X" dimension
     j_c: int
         vorticity point indices along "Y" dimension
+    f_c: int or None
+        Face indices of the vorticity points for multi-tile grids; None for single-tile grids.
 
     RETURNS:
     --------
@@ -179,17 +402,54 @@ def uvcoords_from_qindices(grid, i_c, j_c):
     """
     return uvcoords_from_uvindices(
         grid,
-        uvindices_from_qindices(grid, i_c, j_c),
+        uvindices_from_qindices(grid, i_c, j_c, f_c=f_c),
     )
+
+# xgcm positions at which a vertical *interface* (cell-edge) coordinate can sit,
+# as opposed to the "center" position where the paired layer coordinate sits.
+_INTERFACE_POSITIONS = ("outer", "inner", "left", "right")
+
+
+def _interface_coords(grid, da):
+    """Interface (cell-edge) coordinates matching the vertical dimensions `da` carries.
+
+    A transport's layer (cell-center) coordinate needs no help: it is one of the
+    transport's own dimensions, so it rides along from `utr`/`vtr` into the section.
+    Its interface coordinate cannot -- it is one point longer, and so is a dimension of
+    nothing on the section. The grid knows it, though: an axis that registers one of
+    `da`'s dimensions at its "center" position names the matching interface coordinate
+    at one of its interface positions.
+
+    Keyed off the data's own dimensions rather than off an axis called "Z", so a
+    vertical axis under any name is found, and a grid that declares only its horizontal
+    axes (as most grids handed to sectionate do, since sections are only ever traced
+    horizontally) simply contributes nothing.
+
+    Only names present in `grid._ds` are returned: xgcm requires an axis' positions to
+    name *dimensions*, but a dimension need not carry coordinate values.
+    """
+    coords = {}
+    for axis in grid.axes.values():
+        positions = axis.coords
+        if positions.get("center") not in da.dims:
+            continue
+        name = next(
+            (positions[pos] for pos in _INTERFACE_POSITIONS
+             if positions.get(pos) in grid._ds),
+            None
+        )
+        if name is not None:
+            coords[name] = grid._ds[name]
+    return coords
+
 
 def convergent_transport(
     grid,
     i_c,
     j_c,
+    f_c=None,
     utr="umo",
     vtr="vmo",
-    layer="z_l",
-    interface="z_i",
     outname="conv_mass_transport",
     sect_coord="sect",
     geometry="spherical",
@@ -199,7 +459,7 @@ def convergent_transport(
     """
     Lazily calculates extensive transports normal to a section, with the sign convention of positive into the spherical polygon
     defined by the section, unless overridden by changing the "positive_in=True" keyword argument. Supports curvlinear geometries
-    and complicated grid topologies, as long as the grid is *locally* orthogonal (as in MOM6).
+    and complicated grid topologies, as long as the grid is *locally* orthogonal.
     Lazily broadcasts the calculation in all dimensions except ("X", "Y").
 
     PARAMETERS:
@@ -207,15 +467,17 @@ def convergent_transport(
     grid: xgcm.Grid
         Grid object describing ocean model grid and containing data variables. Must include variables "utr" and "vtr" (see kwargs).
     i_c: int
-        Vorticity point indices along "X" dimension. 
+        Vorticity point indices along "X" dimension.
     j_c: int
         Vorticity point indices along "Y" dimension.
+    f_c: array-like or None
+        Vorticity point face (tile) indices, required on multi-tile grids (those with
+        `face_connections`) and returned by `grid_section` for them; leave as None for
+        single-tile grids.
     utr: str
         Name of "X"-direction tracer transport
     vtr: str
         Name of "Y"-direction tracer transport
-    layer : str or None
-    interface : str or None
     outname : str
         Name of output xr.DataArray variable. Default: "conv_mass_transport".
     sect_coord: str
@@ -228,6 +490,11 @@ def convergent_transport(
         If False, convergence is defined as "outwards" (equivalently, negative the inward convergence).
         If a boolean xr.DataArray, get value of positive_in by selecting the value of the mask on the inside
         of an arbitrary velocity face.
+        For *open* sections (whose first and last waypoints are far apart) there is no enclosing
+        polygon, so "inwards"/"outwards" is undefined. In that case the sign instead follows the
+        left-of-transect convention: `positive_in=True` makes positive transport point to the LEFT
+        of the section as it is traversed from the first to the last waypoint, and `positive_in=False`
+        flips it to the right. A UserWarning is raised so the orientation can be verified.
     cell_widths : dict
         Values of "U" and "V" items in `cell_widths` correspond to the names of the coordinates describing the width of
         velocity cells. If they are both present in `grid._ds`, accumulate distance along the section and add it to the
@@ -239,15 +506,22 @@ def convergent_transport(
         Contains the calculated normal transport and the coordinates of the contributing velocity points (`lon`, `lat`),
         as well as some useful metadata, such as whether each point corresponds to a "U" or "V" velocity and whether
         the sign of the transport had to be flipped to make it point inwards.
+
+        Vertical coordinates are not named anywhere in the call: the layer (cell-center)
+        coordinate is inherited from `utr`/`vtr`, being one of their dimensions, and the
+        matching interface (cell-edge) coordinate is read off whichever axis of `grid`
+        registers that layer dimension at its "center" position. Declare the vertical
+        axis on the `xgcm.Grid` (e.g. `coords={..., "Z": {"center": "z_l", "outer":
+        "z_i"}}`) if the interface coordinate is wanted downstream.
     """
-    
-    if (layer is not None) and (interface is not None):
-        if layer.replace("l", "i") != interface:
-            raise ValueError("Inconsistent layer and interface grid variables!")
-            
-    uvindices = uvindices_from_qindices(grid, i_c, j_c)
-    uvcoords = uvcoords_from_qindices(grid, i_c, j_c)
-    
+
+    # On a multi-tile grid the contributing velocity face varies along the section
+    # (`uvindices["face"]`); it is selected pointwise in every `.isel` below.
+    facedim = get_facedim(grid) if f_c is not None else None
+
+    uvindices = uvindices_from_qindices(grid, i_c, j_c, f_c=f_c)
+    uvcoords = uvcoords_from_qindices(grid, i_c, j_c, f_c=f_c)
+
     sect = xr.Dataset()
     sect = sect.assign_coords({
         sect_coord: xr.DataArray(
@@ -257,62 +531,95 @@ def convergent_transport(
     })
     sect["i"] = xr.DataArray(uvindices["i"], dims=sect_coord)
     sect["j"] = xr.DataArray(uvindices["j"], dims=sect_coord)
+    if facedim is not None:
+        sect["face"] = xr.DataArray(uvindices["face"], dims=sect_coord)
+    fsel = {facedim: sect["face"]} if facedim is not None else {}
     sect["Usign"] = xr.DataArray(
-        np.array([1 if i else -1 for i in ~uvindices["nward"]]),
+        np.array([1 if i else -1 for i in ~uvindices["Yinc"]]),
         dims=sect_coord
     )
     sect["Vsign"] = xr.DataArray(
-        np.array([1 if i else -1 for i in uvindices["eward"]]),
+        np.array([1 if i else -1 for i in uvindices["Xinc"]]),
         dims=sect_coord
     )
     sect["var"] = xr.DataArray(uvindices["var"], dims=sect_coord)
     sect["Umask"] = xr.DataArray(uvindices["var"]=="U", dims=sect_coord)
     sect["Vmask"] = xr.DataArray(uvindices["var"]=="V", dims=sect_coord)
-    
+
+    # Per-edge sign: +1 if the velocity's positive direction points left of the section's
+    # direction of travel. Multi-tile grids carry this geometrically (`Lsign`), so it stays
+    # consistent across rotated faces; single-tile grids reduce to the original face-frame
+    # Usign/Vsign, leaving those results unchanged.
+    if facedim is not None:
+        sect["Lsign"] = xr.DataArray(uvindices["Lsign"], dims=sect_coord)
+    else:
+        sect["Lsign"] = sect["Usign"]*sect["Umask"] + sect["Vsign"]*sect["Vmask"]
+
     mask_types = (np.ndarray, dask.array.Array, xr.DataArray)
     if isinstance(positive_in, mask_types):
         positive_in = is_mask_inside(positive_in, grid, sect)
         
     else:
-        if (geometry == "cartesian") and (grid.axes["X"]._boundary == "periodic"):
+        if (geometry == "cartesian") and (grid.axes["X"].padding == "periodic"):
             raise ValueError("Periodic cartesian domains are not yet supported!")
         coords = coord_dict(grid)
         geo_corners = get_geo_corners(grid)
+        # corner-grid selection is over all N corners ("pt"); the face varies per corner.
+        corner_fsel = (
+            {facedim: xr.DataArray(np.asarray(f_c), dims=("pt",))}
+            if facedim is not None else {}
+        )
         idx = {
             coords["X"]["corner"]:xr.DataArray(i_c, dims=("pt",)),
             coords["Y"]["corner"]:xr.DataArray(j_c, dims=("pt",)),
+            **corner_fsel
         }
-        counterclockwise = is_section_counterclockwise(
-            geo_corners["X"].isel(idx).values,
-            geo_corners["Y"].isel(idx).values,
-            geometry=geometry
+        lons_q = geo_corners["X"].isel(idx).values
+        lats_q = geo_corners["Y"].isel(idx).values
+        section_is_open = (
+            distance_on_unit_sphere(lons_q[0], lats_q[0], lons_q[-1], lats_q[-1]) > 10.
         )
-        positive_in = positive_in ^ (not(counterclockwise))
+        if section_is_open:
+            # An open section encloses no polygon, so the inward/outward meaning of
+            # `positive_in` is undefined. Fall back to the left-of-transect convention:
+            # `positive_in=True` keeps the per-edge `Lsign` (positive transport to the LEFT
+            # of travel, from the first waypoint to the last) and `positive_in=False` flips
+            # it to the right. No polygon-orientation correction is applied.
+            warnings.warn(
+                "This section is open (its first and last waypoints are far apart), so it does "
+                "not enclose a polygon and the inward/outward sense of `positive_in` is undefined. "
+                "Sectionate applies the left-of-transect convention instead: with `positive_in=True` "
+                "positive transport points to the LEFT of the section as it is traversed from the "
+                "first to the last waypoint (set `positive_in=False` to flip to right-of-transect). "
+                "Verify the sign matches your expectations, e.g. by plotting the section's normal vectors."
+            )
+        else:
+            # Closed section encloses a polygon: orient so `positive_in` means "into" it.
+            counterclockwise = is_section_counterclockwise(
+                lons_q, lats_q, geometry=geometry
+            )
+            positive_in = positive_in ^ (not(counterclockwise))
     orient_fact = 1 if positive_in else -1
-    
+
     coords = coord_dict(grid)
     usel = {
         coords["X"]["corner"]: sect["i"],
-        coords["Y"]["center"]: wrap_idx(sect["j"], grid, "Y")
+        coords["Y"]["center"]: wrap_idx(sect["j"], grid, "Y"),
+        **fsel
     }
     vsel = {
         coords["X"]["center"]: wrap_idx(sect["i"], grid, "X"),
-        coords["Y"]["corner"]: sect["j"]
+        coords["Y"]["corner"]: sect["j"],
+        **fsel
     }
     
     u = grid._ds[utr]
     v = grid._ds[vtr]
     
-    conv_umo_masked = (
-        u.isel(usel).fillna(0.)
-        *sect["Usign"]*sect["Umask"]
-    )
-    conv_vmo_masked = (
-        v.isel(vsel).fillna(0.)
-        *sect["Vsign"]*sect["Vmask"]
-    )
+    conv_umo_masked = u.isel(usel).fillna(0.)*sect["Umask"]
+    conv_vmo_masked = v.isel(vsel).fillna(0.)*sect["Vmask"]
     conv_transport = xr.DataArray(
-        (conv_umo_masked + conv_vmo_masked)*orient_fact,
+        (conv_umo_masked + conv_vmo_masked)*sect["Lsign"]*orient_fact,
     )
     dsout = xr.Dataset({outname: conv_transport})
     
@@ -333,10 +640,7 @@ def convergent_transport(
         })
 
     dsout = dsout.assign_coords({
-        "sign": orient_fact*(
-            sect["Usign"]*sect["Umask"] +
-            sect["Vsign"]*sect["Vmask"]
-        ),
+        "sign": orient_fact*sect["Lsign"],
         "dir": xr.DataArray(
             np.array(["U" if u else "V" for u in sect["Umask"]]),
             coords=(dsout[sect_coord],),
@@ -357,12 +661,10 @@ def convergent_transport(
         "orient_fact":orient_fact,
         "positive_in":positive_in,
     }}
-    dsout[outname].attrs
-    
-    if layer is not None:
-        dsout[layer] = grid._ds[layer]
-        if interface is not None:
-            dsout[interface] = grid._ds[interface]
+
+    # The layer (cell-center) coordinate arrived with `utr`/`vtr`; its interface
+    # coordinate is a point longer and has to come from the grid (`_interface_coords`).
+    dsout = dsout.assign_coords(_interface_coords(grid, dsout[outname]))
 
     return dsout
 
@@ -372,7 +674,13 @@ def is_section_counterclockwise(lons_c, lats_c, geometry="spherical"):
     `geometry`). Under the hood, it does this by checking whether the signed area (or determinant) of the polygon
     is negative (counterclockwise) or positive (clockwise). This is only a meaningful calculation if the section
     is closed, i.e. (lons_c[-1], lats_c[-1]) == (lons_c[0], lats_c[0]), and therefore defines a polygon.
-    
+
+    If the section is *open* (its first and last waypoints are far apart), it is closed here with a
+    great-circle segment from the last waypoint back to the first so that an orientation can still be
+    computed, and a UserWarning is raised. Because that closure is arbitrary, the inward/outward sense is
+    undefined for open sections; callers should instead rely on the left-of-transect convention (positive
+    transport to the left of travel from the first to the last waypoint).
+
     For the case `geometry="spherical"`, the periodic nature of the longitude coordinate complicates things;
     instead of working in spherical coordinates, we use a South-Pole stereographic projection of the surface of the sphere
     and evaluate the orientation of the projected polygon with respect to the stereographic plane.
@@ -390,7 +698,14 @@ def is_section_counterclockwise(lons_c, lats_c, geometry="spherical"):
     counterclockwise : bool
     """
     if distance_on_unit_sphere(lons_c[0], lats_c[0], lons_c[-1], lats_c[-1]) > 10.:
-        warnings.warn("The orientation of open sections is ambiguous–verify that it matches expectations!")
+        warnings.warn(
+            "`is_section_counterclockwise` was called on an open section; it is closed here with "
+            "a great-circle segment from the last waypoint back to the first so that an orientation "
+            "can still be returned, but that orientation is arbitrary for an open section. For "
+            "transports, do not rely on this: `convergent_transport` instead uses the well-defined "
+            "left-of-transect convention (positive transport to the LEFT of travel, from the first "
+            "waypoint to the last)."
+        )
         lons_c = np.append(lons_c, lons_c[0])
         lats_c = np.append(lats_c, lats_c[0])
     
@@ -447,58 +762,72 @@ def is_mask_inside(mask, grid, sect, idx=0):
     --------
     positive_in : bool
     """
-    symmetric = check_symmetric(grid)
+    offset = corner_offset(grid)
     coords = coord_dict(grid)
+    facedim = get_facedim(grid)
+    fsel = {facedim: int(sect["face"][idx])} if (facedim is not None and "face" in sect) else {}
+    # Pick the neighbouring tracer cell on the side the stored velocity's positive direction
+    # points to, using the geometric `Lsign` (+1 if that direction is left of travel) rather
+    # than the face-frame `Usign`/`Vsign`. On single-tile 'outer'/'right' grids `Lsign` equals
+    # `Usign`/`Vsign` for the relevant face, so this is unchanged there; on 'left' (MITgcm/ECCO)
+    # and rotated multi-tile seams it carries the correct staggering/topology, where the
+    # face-frame signs would select the wrong side and invert `positive_in`.
     if sect["var"][idx]=="U":
         i = (
             sect["i"][idx]
-            - (1 if sect["Usign"][idx].values==-1. else 0)
-            + (1 if not(symmetric) else 0)
+            - (1 if sect["Lsign"][idx].values==-1. else 0)
+            + offset
         )
         j = sect["j"][idx]
         if 0<=i<=grid._ds[coords["X"]["center"]].size-1:
             positive_in = mask.isel({
                 coords["X"]["center"]: i,
-                coords["Y"]["center"]: j
+                coords["Y"]["center"]: j,
+                **fsel
             }).values
         elif i==-1:
             positive_in = not(mask.isel({
                 coords["X"]["center"]: i+1,
-                coords["Y"]["center"]: j
+                coords["Y"]["center"]: j,
+                **fsel
             })).values
         elif i==grid._ds[coords["X"]["center"]].size:
             positive_in = not(mask.isel({
                 coords["X"]["center"]: i-1,
-                coords["Y"]["center"]: j
+                coords["Y"]["center"]: j,
+                **fsel
             })).values
     elif sect["var"][idx]=="V":
         i = sect["i"][idx]
         j = (
             sect["j"][idx]
-            - (1 if sect["Vsign"][idx].values==-1. else 0)
-            + (1 if not(symmetric) else 0)
+            - (1 if sect["Lsign"][idx].values==-1. else 0)
+            + offset
         )
         if 0<=j<=grid._ds[coords["Y"]["center"]].size-1:
             positive_in = mask.isel({
                 coords["X"]["center"]: i,
-                coords["Y"]["center"]: j
+                coords["Y"]["center"]: j,
+                **fsel
             }).values
         elif j==-1:
             positive_in = not(mask.isel({
                 coords["X"]["center"]: i,
                 coords["Y"]["center"]: j+1,
+                **fsel
             })).values
         elif j==grid._ds[coords["Y"]["center"]].size:
             positive_in = not(mask.isel({
                 coords["X"]["center"]: i,
-                coords["Y"]["center"]: j-1
+                coords["Y"]["center"]: j-1,
+                **fsel
             })).values
     return positive_in
 
 
 def wrap_idx(idx, grid, axis):
     coords = coord_dict(grid)
-    if grid.axes[axis]._boundary == "periodic":
+    if grid.axes[axis].padding == "periodic":
         idx = np.mod(idx, grid._ds[coords[axis]["center"]].size)
     else:
         idx = np.minimum(idx, grid._ds[coords[axis]["center"]].size-1)

@@ -24,7 +24,7 @@ def test_get_geo_corners():
             "X":{"center":"xh", "outer":"xq"},
             "Y":{"center":"yh", "outer":"yq"}
         },
-        boundary={"X":"periodic", "Y":"extend"},
+        padding={"X":"periodic", "Y":"extend"},
         autoparse_metadata=False
     )
 

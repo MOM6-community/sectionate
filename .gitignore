@@ -65,6 +65,9 @@ instance/
 
 # Sphinx documentation
 docs/_build/
+# Generated on every build by conf.py's _sync_examples(), which copies
+# examples/*.ipynb in and rmtree's the directory first. Never hand-edited.
+docs/source/examples/
 
 # PyBuilder
 target/
@@ -102,6 +105,13 @@ venv.bak/
 
 # mypy
 .mypy_cache/
+
+# Local example data cache (fetched from Zenodo / PO.DAAC at runtime)
+data/*.nc
+
+# Build artifacts and OS cruft
+*.tar.gz
+.DS_Store
 
 # Version file generated from the git tag by hatch-vcs at build time.
 sectionate/_version.py

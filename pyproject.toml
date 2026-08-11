@@ -19,7 +19,7 @@ dependencies = [
     "numpy",
     "scipy",
     "xarray",
-    "xgcm == 0.9.*",
+    "xgcm >= 0.10.1",
 ]
 
 [project.urls]

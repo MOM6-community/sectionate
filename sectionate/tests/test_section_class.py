@@ -21,7 +21,7 @@ boundary = {
     'X': 'periodic',
     'Y': 'extend'
 }
-grid = xgcm.Grid(ds, coords=coords, boundary=boundary, autoparse_metadata=False)
+grid = xgcm.Grid(ds, coords=coords, padding=boundary, autoparse_metadata=False)
 
 def modequal(a,b):
     return np.equal(np.mod(a, 360.), np.mod(b, 360.))
@@ -39,6 +39,29 @@ def test_open_gridded_section():
         modequal(sec_gridded.lons_c, np.array([0.,  60., 120., 120., 120.,  60., 0.])),
         modequal(sec_gridded.lats_c, np.array([-80., -80., -80., -40.,   0.,   0.,   0.]))
     ])
+
+def test_gridded_section_copy():
+    from sectionate.section import Section, GriddedSection
+    lonseg = np.array([0., 120, 120, 0])
+    latseg = np.array([-80., -80, 0, 0])
+    sec_gridded = GriddedSection(Section("testsec", (lonseg, latseg)), grid)
+
+    dup = sec_gridded.copy()
+    # a real GriddedSection is returned (the old implementation returned None)
+    assert isinstance(dup, GriddedSection)
+    assert dup is not sec_gridded
+    # same contents ...
+    assert np.array_equal(dup.i_c, sec_gridded.i_c)
+    assert np.array_equal(dup.j_c, sec_gridded.j_c)
+    assert np.array_equal(dup.lons_c, sec_gridded.lons_c)
+    assert np.array_equal(dup.lats_c, sec_gridded.lats_c)
+    assert dup.name == sec_gridded.name
+    # ... grid shared, index arrays are independent copies
+    assert dup.grid is sec_gridded.grid
+    assert dup.i_c is not sec_gridded.i_c
+    dup.i_c[0] = 999
+    assert sec_gridded.i_c[0] != 999
+
 
 def test_closed_gridded_parent_section():
     from sectionate.section import Section, join_sections, GriddedSection
