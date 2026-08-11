@@ -57,6 +57,9 @@ class Section():
                 raise ValueError("If coords is a list, its elements must be (lon,lat) 2-tuples")
         else:
             raise ValueError("coords must be a 2-tuple of lists/arrays or a list of 2-tuples")
+
+        if curve == "latitude circle" and not all(x == self.lats_c[0] for x in self.lats_c):
+            raise ValueError("If curve = 'latitude circle', all coords must have the same latitude")
             
         self.children = children.copy() # need this to be a copy or get a recursion error in __repr__...
         self.parent = parent
