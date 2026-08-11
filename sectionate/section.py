@@ -304,20 +304,21 @@ def _check_supported_topology(grid):
 
     A section is traced by walking a graph of corner points, and a step across a tile seam is
     recognised by its two ends having different face indices (see `transports._uv_for_edge`).
-    Two things are therefore required of `face_connections`, neither of which xgcm enforces
-    when the grid is built:
+    A face glued to *itself* therefore cannot be traced: both sides of such a seam carry the
+    same face index, so a crossing is indistinguishable from an ordinary step within the face,
+    and the seam's velocity is read from the wrong side -- silently, since nothing about the
+    indices looks out of place. xgcm builds such a grid without complaint and nothing further
+    down the pipeline notices, so this is the only place it is caught. Topologies of that shape
+    belong on the axis rather than in `face_connections`: a zonally periodic axis as
+    ``padding="periodic"``, a bipolar/tripolar north fold as ``padding={"Y": {"fold": ...}}``
+    on a single-tile grid. sectionate handles both of those natively.
 
-    * Every face named as a neighbour must exist, and every connection must be mutual: the
-      named neighbour must name this face back, along the axis it was reached by. Otherwise
-      the walk either steps into a face that is not there or into one with no way back --
-      today an obscure failure from deep inside xgcm's padding.
-    * No face may be glued to itself. Both sides of such a seam carry the same face index, so
-      a crossing is indistinguishable from an ordinary step within the face, and the seam's
-      velocity is read from the wrong side -- silently, since nothing about the indices looks
-      out of place. Topologies of that shape belong on the axis rather than in
-      `face_connections`: a zonally periodic axis as ``padding="periodic"``, a bipolar/tripolar
-      north fold as ``padding={"Y": {"fold": ...}}`` on a single-tile grid. sectionate handles
-      both of those natively.
+    The other two checks below -- that every face named as a neighbour exists, and that every
+    connection is mutual -- are defence in depth, not new requirements: `xgcm.Grid.__init__`
+    already rejects both while it builds its face-connection table (an unknown neighbour raises
+    `KeyError`, a one-sided connection `TypeError`), so any grid that reaches here has passed
+    them. They are kept because sectionate reads the `_face_connections` mapping directly, and
+    they say in one sentence what xgcm reports from deep inside its own construction.
 
     A grid can still prove unsupported once its corner graph is actually built -- a corner that
     ends up with more than four neighbours, or a staggered grid whose seam corners are stored on
@@ -325,7 +326,9 @@ def _check_supported_topology(grid):
     `gridutils.build_neighbor_maps` and `gridutils._OuterTopology`.
     """
     facedim = grid._facedim
-    faces = set(range(grid._ds.sizes[facedim]))
+    # Face *labels*, not a 0..N-1 range: a grid may label its faces however it likes
+    # (e.g. `face = [1, 2]`), and `face_connections` is keyed by those labels.
+    faces = set(grid._ds[facedim].values.tolist())
     connections = (getattr(grid, "_face_connections", None) or {}).get(facedim, {})
     for face, axis_sides in connections.items():
         for axis, sides in axis_sides.items():
@@ -342,11 +345,14 @@ def _check_supported_topology(grid):
                         "single-tile grid: padding='periodic' for a periodic axis, or "
                         "padding={'Y': {'fold': 'corner'}} for a bipolar/tripolar north fold."
                     )
+                # Defence in depth (see the docstring): xgcm already rejects both of the
+                # cases below at `Grid.__init__`, so neither fires on a grid built the
+                # ordinary way.
                 if neighbor_face not in faces:
                     raise ValueError(
                         f"Face {face} of this grid's `face_connections` names a neighbour face "
                         f"{neighbor_face} along '{axis}', but the grid's '{facedim}' dimension "
-                        f"only has {len(faces)} faces."
+                        f"has no such face; its faces are {sorted(faces)}."
                     )
                 back = connections.get(neighbor_face, {}).get(neighbor_axis, ())
                 if not any(

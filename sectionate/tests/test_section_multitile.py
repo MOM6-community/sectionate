@@ -525,22 +525,25 @@ def test_face_glued_to_itself_raises():
         grid_section(grid, [0., 1.], [0., 1.])
 
 
-def test_unknown_neighbour_face_raises():
-    """A `face_connections` entry naming a face the grid does not have is refused with a
-    clear message, rather than failing obscurely inside xgcm's padding later on."""
-    grid = two_face_x_to_x()
-    grid._face_connections["face"][0]["X"] = (None, (7, "X", False))
-    with pytest.raises(ValueError, match="only has 2 faces"):
-        grid_section(grid, [10., 100.], [0., 0.])
-
-
-def test_one_sided_face_connection_raises():
-    """A seam declared from only one side is refused: the walk could cross it but never
-    step back, so the topology is not one sectionate can trace."""
-    grid = two_face_x_to_x()
-    grid._face_connections["face"][1]["X"] = (None, None)
-    with pytest.raises(ValueError, match="not mutual"):
-        grid_section(grid, [10., 100.], [0., 0.])
+@pytest.mark.parametrize("fc, exc", [
+    # a neighbour face the grid does not have
+    ({"face": {0: {"X": (None, (7, "X", False))},
+               1: {"X": ((0, "X", False), None)}}}, KeyError),
+    # a seam declared from only one side
+    ({"face": {0: {"X": (None, (1, "X", False))},
+               1: {"X": (None, None)}}}, TypeError),
+])
+def test_xgcm_rejects_broken_face_connections_at_construction(fc, exc):
+    """xgcm -- not sectionate -- is what enforces that every face named as a neighbour
+    exists and that every connection is mutual: `xgcm.Grid.__init__` aborts on both while
+    it builds its face-connection table, so no such grid can ever reach `grid_section`.
+    `_check_supported_topology` restates both as defence in depth; this test pins where
+    the real enforcement lives, so that if xgcm ever stops doing it the backstop's status
+    is revisited rather than silently relied on."""
+    ng = 6
+    lon = np.zeros((2, ng, ng)); lat = np.zeros((2, ng, ng))
+    with pytest.raises(exc):
+        _make_grid(lon, lat, fc)
 
 
 def test_supported_multitile_topologies_pass_the_check():
@@ -564,6 +567,34 @@ def test_supported_multitile_topologies_pass_the_check():
     zeros = np.zeros((13, ng, ng))
     llc90 = _make_grid(zeros, zeros.copy(), {"face": LLC90_FACE_CONNECTIONS["tile"]})
     _check_supported_topology(llc90)
+
+
+def test_non_zero_based_face_labels_pass_the_check():
+    """Face labels need not be 0..N-1. A grid labelled `face = [1, 2]` is perfectly legal
+    -- xgcm accepts it and keys `face_connections` by those labels -- so the check must
+    read the labels themselves, not assume a range. (It previously built the set of known
+    faces as `range(n_faces)`, and rejected this grid for naming face 2 as a neighbour.)"""
+    from sectionate.section import _check_supported_topology
+
+    ng = 6
+    lon = np.zeros((2, ng, ng)); lat = np.zeros((2, ng, ng))
+    lon[0] = np.broadcast_to(np.linspace(0, 90, ng), (ng, ng))
+    lon[1] = np.broadcast_to(np.linspace(90, 180, ng), (ng, ng))
+    ds = xr.Dataset({}, coords={
+        "xg": (("xg",), np.arange(ng)),
+        "yg": (("yg",), np.arange(ng)),
+        "face": (("face",), np.array([1, 2])),
+        "geolon_c": (("face", "yg", "xg"), lon),
+        "geolat_c": (("face", "yg", "xg"), lat),
+    })
+    grid = xgcm.Grid(
+        ds, coords={"X": {"outer": "xg"}, "Y": {"outer": "yg"}},
+        padding="fill", fill_value=np.nan,
+        face_connections={"face": {1: {"X": (None, (2, "X", False))},
+                                   2: {"X": ((1, "X", False), None)}}},
+        autoparse_metadata=False,
+    )
+    _check_supported_topology(grid)
 
 
 def test_in_velocity_range_rejects_unknown_component():

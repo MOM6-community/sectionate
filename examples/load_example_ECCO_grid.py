@@ -36,8 +36,8 @@ ZENODO_CONCEPT_DOI = "10.5281/zenodo.21051424"
 ECCO_GEOMETRY_FILE = "GRID_GEOMETRY_ECCO_V4r4_native_llc0090.nc"
 
 # Published MD5 checksums (from the Zenodo record) for the files this example needs:
-# the grid geometry and the 2010 monthly volume fluxes (one file per collection,
-# concatenated along `time`).
+# the grid geometry, and a single file holding all twelve 2010 monthly volume fluxes
+# along a `time` dimension.
 ECCO_FILE_MD5 = {
     "GRID_GEOMETRY_ECCO_V4r4_native_llc0090.nc": "2663a7e86d7a0e6f7ddf84124c8376a6",
     "OCEAN_3D_VOLUME_FLUX_mon_mean_2010_ECCO_V4r4_native_llc0090.nc": "a957bd1d133156b0ad6dd611bd39af7a",
@@ -114,8 +114,8 @@ def download_ECCO_geometry(data_dir="../data"):
 
 
 def download_ECCO_volume_flux(data_dir="../data"):
-    """Return a sorted list of the 2010 monthly volume-flux files, fetching any that
-    are missing from Zenodo.
+    """Return the local paths of the 2010 monthly volume-flux data (currently a single
+    file covering all twelve months), fetching from Zenodo any that are missing.
 
     These files hold the native 'left'-staggered mass-weighted velocities
     ``UVELMASS`` (on the cell 'u'/west face, dims ``(k, tile, j, i_g)``) and
@@ -181,8 +181,9 @@ def load_ECCO_MOC_grid(data_dir="../data"):
     Same native ('left') multi-tile grid as ``load_ECCO_LLC90_grid``, but the
     dataset additionally carries ``utr``/``vtr`` -- the volume transports (m^3/s)
     across the U (west) and V (south) cell faces, with vertical dimension ``k``
-    (depth coordinate ``Z``), time-averaged over the twelve months of 2010 -- ready
-    to pass to ``sectionate.transports.convergent_transport`` as
-    ``utr="utr", vtr="vtr"``.
+    (depth coordinate ``Z``) and a length-12 ``time`` dimension holding the twelve
+    2010 monthly means -- ready to pass to
+    ``sectionate.transports.convergent_transport`` as ``utr="utr", vtr="vtr"``
+    (average over ``time`` first for an annual-mean overturning).
     """
     return _ecco_grid(_ecco_dataset(data_dir=data_dir, with_transports=True))

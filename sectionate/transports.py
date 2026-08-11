@@ -39,12 +39,17 @@ def _in_velocity_range(var, vi, vj, ranges):
     `_anchor_velocity` builds a section edge's velocity index by offsetting the corner the
     edge leaves from. Read in the frame of the face that corner belongs to, an edge that
     stays inside that face always lands on a stored velocity. An edge that crosses a seam,
-    however, is stored on only ONE of the two faces it touches: read in the other face's
+    however, is stored on at most ONE of the two faces it touches: read in the other face's
     frame the same edge produces an index that falls outside that face's array -- past its
     high end, or negative. `_uv_for_edge` uses this check to tell the two apart, taking the
     source face's index when it is in range and otherwise the destination face's, so a
     velocity is always read in the frame of the face that stores it and never has to be
     rotated across the seam.
+
+    "At most one" because a staggered tiling can also leave a seam edge stored on NEITHER
+    face -- a crossing through a corner the faces share but neither one stores. Such an edge
+    is out of range in both frames, which is `_uv_for_edge`'s third branch: it is degenerate
+    and carries no flux.
 
     `ranges` holds a face's array lengths along each axis: "Xc"/"Yc" for the tracer-center
     axes and "Xq"/"Yq" for the corner axes. A "V" (Y-direction) velocity sits at
