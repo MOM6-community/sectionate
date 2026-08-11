@@ -7,7 +7,7 @@ from .gridutils import (
     build_neighbor_maps,
 )
 
-# Two corner indices map to the same physical point on seams that fold or wrap (e.g.
+# Two corner indices map to the same physical point on seams that fold Tor wrap (e.g.
 # the bipolar north fold). Geodesic distances below this many metres are treated as
 # the same point: far below any real grid spacing, far above float round-trip error.
 COINCIDENT_TOLERANCE_M = 1.e-3
@@ -304,6 +304,7 @@ def _check_supported_topology(grid):
 
     A section is traced by walking a graph of corner points, and a step across a tile seam is
     recognised by its two ends having different face indices (see `transports._uv_for_edge`).
+    
     A face glued to *itself* therefore cannot be traced: both sides of such a seam carry the
     same face index, so a crossing is indistinguishable from an ordinary step within the face,
     and the seam's velocity is read from the wrong side -- silently, since nothing about the
@@ -311,13 +312,6 @@ def _check_supported_topology(grid):
     `face_connections`: a zonally periodic axis as ``padding="periodic"``, a bipolar/tripolar
     north fold as ``padding={"Y": {"fold": ...}}`` on a single-tile grid. sectionate handles
     both of those natively.
-
-    That is the only thing checked here, because it is the only one left to check. xgcm builds
-    a self-glued grid without complaint, and nothing further downstream notices, so sectionate
-    has to catch it. The other ways `face_connections` can be malformed -- naming a face the
-    grid does not have, or declaring a seam from one side only -- already abort in
-    `xgcm.Grid.__init__` while it builds its face-connection table, so no such grid ever
-    reaches this function and re-checking them here would be dead code.
 
     A grid can still prove unsupported once its corner graph is actually built -- a corner that
     ends up with more than four neighbours, or a staggered grid whose seam corners are stored on
