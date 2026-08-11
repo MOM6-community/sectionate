@@ -263,14 +263,14 @@ def _coordinate_jittered_cube_left_grid(eps=2.0):
 
 
 def test_disagreeing_extrapolation_junction_merges_and_conserves():
-    """Regression for MOM6-community/sectionate#49 (the LLC90 tiles 2/6/10
-    rotated three-tile corner junction). When the three faces meeting at a corner
-    stored on no native face extrapolate *disagreeing* corner coordinates, the
-    coordinate merges cannot see that they are one physical point, so without the
-    topological (surrounding-cell) merge the junction splits into separate
-    degree-0 nodes and the stored radial velocity faces around it read as zero
-    from every neighbour's frame -- introducing a spurious convergence into the
-    junction cells.
+    """Regression for a three-tile corner junction that split into separate nodes
+    (as the LLC90 tiles 2/6/10 junction once did). When the three faces meeting
+    at a corner stored on no native face extrapolate *disagreeing* corner
+    coordinates, the coordinate merges cannot see that they are one physical
+    point, so without the topological (surrounding-cell) merge the junction
+    splits into separate degree-0 nodes and the stored radial velocity faces
+    around it read as zero from every neighbour's frame -- introducing a spurious
+    convergence into the junction cells.
 
     Here the exact cube's two un-stored vertices are turned into that failure
     mode by jittering each face's corner coordinates. The topological merge must

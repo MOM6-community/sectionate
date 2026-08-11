@@ -7,7 +7,7 @@ from .gridutils import (
     build_neighbor_maps,
 )
 
-# Two corner indices map to the same physical point on seams that fold or wrap (e.g.
+# Two corner indices map to the same physical point on seams that fold Tor wrap (e.g.
 # the bipolar north fold). Geodesic distances below this many metres are treated as
 # the same point: far below any real grid spacing, far above float round-trip error.
 COINCIDENT_TOLERANCE_M = 1.e-3
@@ -335,27 +335,39 @@ def grid_section(grid, lons, lats, curve="great circle"):
 
 def _check_supported_topology(grid):
     """
-    Raise if the multi-tile `grid` requires topology features sectionate does not yet support.
+    Raise if the multi-tile `grid` describes a topology sectionate cannot trace a section on.
 
-    A tripolar/bipolar north fold expressed as a `face_connections` self-connection (a face that
-    connects to itself along the "Y" axis) is not supported. Use the single-tile bipolar-fold
-    padding instead -- ``padding={"X": "periodic", "Y": {"fold": "corner"}}`` (xgcm >= the
-    bipolar-fold release) -- which sectionate handles natively via xgcm's fold padding.
+    A section is traced by walking a graph of corner points, and a step across a tile seam is
+    recognised by its two ends having different face indices (see `transports._uv_for_edge`).
+    
+    A face glued to *itself* therefore cannot be traced: both sides of such a seam carry the
+    same face index, so a crossing is indistinguishable from an ordinary step within the face,
+    and the seam's velocity is read from the wrong side -- silently, since nothing about the
+    indices looks out of place. Topologies of that shape belong on the axis rather than in
+    `face_connections`: a zonally periodic axis as ``padding="periodic"``, a bipolar/tripolar
+    north fold as ``padding={"Y": {"fold": ...}}`` on a single-tile grid. sectionate handles
+    both of those natively.
+
+    A grid can still prove unsupported once its corner graph is actually built -- a corner that
+    ends up with more than four neighbours, or a staggered grid whose seam corners are stored on
+    no face, for instance. Those are rejected there, each with its own reason; see
+    `gridutils.build_neighbor_maps` and `gridutils._OuterTopology`.
     """
     facedim = grid._facedim
     connections = (getattr(grid, "_face_connections", None) or {}).get(facedim, {})
     for face, axis_sides in connections.items():
-        for sides in axis_sides.values():
+        for axis, sides in axis_sides.items():
             for side in sides:
                 if side is None:
                     continue
-                neighbor_face = side[0]
-                if neighbor_face == face:
+                if side[0] == face:
                     raise NotImplementedError(
-                        "Grids that represent the tripolar/bipolar north fold as a face that "
-                        "connects to itself (a `face_connections` self-connection) are not "
-                        "supported. Build the grid as a single tile with the fold expressed as "
-                        "padding instead: padding={'X':'periodic','Y':{'fold':'corner'}}."
+                        f"Face {face} of this grid's `face_connections` is glued to itself "
+                        f"(along its own '{axis}' axis). sectionate tells a seam crossing from "
+                        "an ordinary step by the face index changing, so it cannot trace a face "
+                        "joined to itself. Express that topology on the axis instead, on a "
+                        "single-tile grid: padding='periodic' for a periodic axis, or "
+                        "padding={'Y': {'fold': 'corner'}} for a bipolar/tripolar north fold."
                     )
 
 def create_section_composite(

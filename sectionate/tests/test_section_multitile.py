@@ -511,13 +511,127 @@ def test_rotated_seam_transport_streamfunction():
     assert np.isclose(abs(conv), abs(dpsi), rtol=1e-9)
 
 
-def test_north_fold_self_connection_raises():
+def test_face_glued_to_itself_raises():
+    """A face connected to itself is refused up front. Both sides of such a seam carry
+    the same face index, so a crossing looks exactly like an ordinary step within the
+    face -- nothing further down the pipeline notices, and a section is silently traced
+    as if the seam were not there. (A periodic axis or a north fold belongs in the axis
+    `padding` of a single-tile grid, which sectionate does support.)"""
     ng = 5
     lon = np.zeros((1, ng, ng)); lat = np.zeros((1, ng, ng))
     fc = {"face": {0: {"Y": ((0, "Y", True), (0, "Y", True))}}}
     grid = _make_grid(lon, lat, fc)
-    with pytest.raises(NotImplementedError):
+    with pytest.raises(NotImplementedError, match="glued to itself"):
         grid_section(grid, [0., 1.], [0., 1.])
+
+
+@pytest.mark.parametrize("fc, exc", [
+    # a neighbour face the grid does not have
+    ({"face": {0: {"X": (None, (7, "X", False))},
+               1: {"X": ((0, "X", False), None)}}}, KeyError),
+    # a seam declared from only one side
+    ({"face": {0: {"X": (None, (1, "X", False))},
+               1: {"X": (None, None)}}}, TypeError),
+])
+def test_xgcm_rejects_broken_face_connections_at_construction(fc, exc):
+    """xgcm -- not sectionate -- enforces that every face named as a neighbour exists and
+    that every connection is mutual: `xgcm.Grid.__init__` aborts on both while it builds
+    its face-connection table, so no such grid can reach `grid_section` in the first place.
+
+    This is why `_check_supported_topology` does not re-check either one. The test pins
+    that upstream contract, so that if xgcm ever stops enforcing it we find out here rather
+    than by tracing a section through a topology nothing validated."""
+    ng = 6
+    lon = np.zeros((2, ng, ng)); lat = np.zeros((2, ng, ng))
+    with pytest.raises(exc):
+        _make_grid(lon, lat, fc)
+
+
+def test_supported_multitile_topologies_pass_the_check():
+    """The front-door check must not reject topologies sectionate really does support --
+    including rotated seams (face 0's X axis glued to face 1's Y axis) and the real
+    13-tile lat-lon-cap connections, whose seams are mutual across different axes."""
+    import os, sys
+    from sectionate.section import _check_supported_topology
+
+    _check_supported_topology(two_face_x_to_x())
+    _check_supported_topology(rotated_two_face_streamfunction())
+
+    examples = os.path.abspath(
+        os.path.join(os.path.dirname(__file__), "..", "..", "examples")
+    )
+    if examples not in sys.path:
+        sys.path.insert(0, examples)
+    from load_example_ECCO_grid import LLC90_FACE_CONNECTIONS  # metadata only, no data
+
+    ng = 4
+    zeros = np.zeros((13, ng, ng))
+    llc90 = _make_grid(zeros, zeros.copy(), {"face": LLC90_FACE_CONNECTIONS["tile"]})
+    _check_supported_topology(llc90)
+
+
+def _labelled_grid(face_connections, labels=(1, 2)):
+    """A two-face 'outer' grid whose face coordinate carries arbitrary labels."""
+    ng = 6
+    lon = np.zeros((2, ng, ng)); lat = np.zeros((2, ng, ng))
+    lon[0] = np.broadcast_to(np.linspace(0, 90, ng), (ng, ng))
+    lon[1] = np.broadcast_to(np.linspace(90, 180, ng), (ng, ng))
+    ds = xr.Dataset({}, coords={
+        "xg": (("xg",), np.arange(ng)),
+        "yg": (("yg",), np.arange(ng)),
+        "face": (("face",), np.array(labels)),
+        "geolon_c": (("face", "yg", "xg"), lon),
+        "geolat_c": (("face", "yg", "xg"), lat),
+    })
+    return xgcm.Grid(
+        ds, coords={"X": {"outer": "xg"}, "Y": {"outer": "yg"}},
+        padding="fill", fill_value=np.nan,
+        face_connections={"face": face_connections},
+        autoparse_metadata=False,
+    )
+
+
+def test_check_reads_face_labels_not_positions():
+    """Face labels need not be 0..N-1: a grid labelled `face = [1, 2]` is legal, and xgcm
+    keys `face_connections` by those labels. The check must therefore compare labels, never
+    positions along the face dimension.
+
+    Both directions are pinned. A legal `[1, 2]` grid must pass -- an earlier version built
+    its set of known faces as `range(n_faces)` and rejected this grid for naming a face 2
+    it thought did not exist. And a `[1, 2]` grid whose face 2 is glued to itself must still
+    be caught, and named as face 2, which is what would break if the surviving comparison
+    ever drifted back to positions."""
+    from sectionate.section import _check_supported_topology
+
+    _check_supported_topology(_labelled_grid(
+        {1: {"X": (None, (2, "X", False))},
+         2: {"X": ((1, "X", False), None)}}
+    ))
+
+    glued = _labelled_grid(
+        {1: {"X": (None, (2, "X", False))},
+         2: {"X": ((1, "X", False), None), "Y": ((2, "Y", True), (2, "Y", True))}}
+    )
+    with pytest.raises(NotImplementedError, match="Face 2 .* glued to itself"):
+        _check_supported_topology(glued)
+
+
+def test_in_velocity_range_rejects_unknown_component():
+    """`_in_velocity_range` decides whether a velocity index exists in a face's own
+    arrays: in range for an edge stored on that face, out of range for one stored on the
+    face across the seam. It only ever sees the "U"/"V" components `_anchor_velocity`
+    produces, so anything else is a caller bug and is reported as one rather than
+    silently falling through to the "U" branch."""
+    from sectionate.transports import _in_velocity_range
+    ranges = {"Xc": 4, "Yc": 4, "Xq": 5, "Yq": 5}
+
+    assert _in_velocity_range("V", 3, 4, ranges)        # (X-center, Y-corner): both in range
+    assert not _in_velocity_range("V", 4, 4, ranges)    # past the end of the X-center axis
+    assert _in_velocity_range("U", 4, 3, ranges)        # (X-corner, Y-center): both in range
+    assert not _in_velocity_range("U", 4, 4, ranges)    # past the end of the Y-center axis
+    assert not _in_velocity_range("U", -1, 0, ranges)   # off the low end
+    with pytest.raises(ValueError, match="'U' or 'V'"):
+        _in_velocity_range("0", 0, 0, ranges)
 
 
 def test_save_load_roundtrip_preserves_face_indices(tmp_path):

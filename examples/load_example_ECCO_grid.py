@@ -2,13 +2,15 @@
 fields needed for the meridional overturning streamfunction -- as an ``xgcm.Grid``
 that sectionate can consume directly.
 
-The required files are a small subset of NASA's ECCO V4r4 state estimate
-(geometry plus the twelve monthly volume-flux files for 2010), redistributed on
-Zenodo (concept DOI `10.5281/zenodo.21051424`, this version `10.5281/zenodo.21051920`)
-purely to make this example reproducible without a NASA Earthdata Login. Any file
-not already present under ``../data/`` is downloaded from Zenodo and checked against
-its published MD5; the original PO.DAAC datasets and their DOIs are listed in the
-Zenodo record's README. Please cite the original NASA sources (see that README).
+The required files are a small subset of NASA's ECCO V4r4 state estimate (the grid
+geometry plus the 2010 monthly volume fluxes), redistributed on Zenodo purely to make
+this example reproducible without a NASA Earthdata Login. Cite it by its concept DOI,
+`10.5281/zenodo.21051424`, which is version-independent and always resolves to the
+latest release; the particular version this module downloads is pinned by
+``ZENODO_RECORD_ID`` below, which is the single place that version is recorded. Any
+file not already present under ``../data/`` is downloaded from that record and checked
+against its published MD5; the original PO.DAAC datasets and their DOIs are listed in
+the Zenodo record's README. Please cite the original NASA sources (see that README).
 
 The native grid is MITgcm-staggered: vorticity points sit on the SW ('left')
 corner and the coordinates are named ``XC/YC`` (centers) and ``XG/YG`` (corners).
@@ -23,30 +25,22 @@ import urllib.request
 import xarray as xr
 import xgcm
 
-# Zenodo record holding the redistributed ECCO V4r4 subset. ZENODO_RECORD_ID is the
-# version-specific record (v2.0.0); ZENODO_CONCEPT_DOI is the version-independent
-# (citeable) DOI that always resolves to the latest version.
-ZENODO_RECORD_ID = "21051920"
+# Zenodo record holding the redistributed ECCO V4r4 subset. ZENODO_RECORD_ID pins the
+# exact version that is downloaded, and is the only place that version is recorded;
+# ZENODO_CONCEPT_DOI is the version-independent (citeable) DOI that always resolves to
+# the latest version. Bumping ZENODO_RECORD_ID means re-checking ECCO_FILE_MD5 below,
+# since each version publishes its own file list and checksums.
+ZENODO_RECORD_ID = "21479854"
 ZENODO_CONCEPT_DOI = "10.5281/zenodo.21051424"
 
 ECCO_GEOMETRY_FILE = "GRID_GEOMETRY_ECCO_V4r4_native_llc0090.nc"
 
 # Published MD5 checksums (from the Zenodo record) for the files this example needs:
-# the grid geometry and the twelve 2010 monthly volume-flux files.
+# the grid geometry, and a single file holding all twelve 2010 monthly volume fluxes
+# along a `time` dimension.
 ECCO_FILE_MD5 = {
     "GRID_GEOMETRY_ECCO_V4r4_native_llc0090.nc": "2663a7e86d7a0e6f7ddf84124c8376a6",
-    "OCEAN_3D_VOLUME_FLUX_mon_mean_2010-01_ECCO_V4r4_native_llc0090.nc": "9d4371c969b2887a6ec61bd32d8f94e9",
-    "OCEAN_3D_VOLUME_FLUX_mon_mean_2010-02_ECCO_V4r4_native_llc0090.nc": "1cad72f3f1030995e6e2b07b41c7d01a",
-    "OCEAN_3D_VOLUME_FLUX_mon_mean_2010-03_ECCO_V4r4_native_llc0090.nc": "2bd83ca7a7b4e96b91e6179e683d88e8",
-    "OCEAN_3D_VOLUME_FLUX_mon_mean_2010-04_ECCO_V4r4_native_llc0090.nc": "dffc775c76c3418f7fa0aa919a3854a5",
-    "OCEAN_3D_VOLUME_FLUX_mon_mean_2010-05_ECCO_V4r4_native_llc0090.nc": "b46303fe1ae85a31b57cd5213a0928b2",
-    "OCEAN_3D_VOLUME_FLUX_mon_mean_2010-06_ECCO_V4r4_native_llc0090.nc": "1540a87364c33614af29f97b8bca0eec",
-    "OCEAN_3D_VOLUME_FLUX_mon_mean_2010-07_ECCO_V4r4_native_llc0090.nc": "226f7bdc68bff510189f2a8242d7193e",
-    "OCEAN_3D_VOLUME_FLUX_mon_mean_2010-08_ECCO_V4r4_native_llc0090.nc": "fbf24a53e650a9c07052aa5369472b04",
-    "OCEAN_3D_VOLUME_FLUX_mon_mean_2010-09_ECCO_V4r4_native_llc0090.nc": "e1a4ac8847c8948317d018445d49556e",
-    "OCEAN_3D_VOLUME_FLUX_mon_mean_2010-10_ECCO_V4r4_native_llc0090.nc": "17845a2cfeb1f53d4ea7f97150bb9b5d",
-    "OCEAN_3D_VOLUME_FLUX_mon_mean_2010-11_ECCO_V4r4_native_llc0090.nc": "55086ea0467dd7bd3b21e17c5afb097d",
-    "OCEAN_3D_VOLUME_FLUX_mon_mean_2010-12_ECCO_V4r4_native_llc0090.nc": "1487f31096153b5dfe188755aceb6553",
+    "OCEAN_3D_VOLUME_FLUX_mon_mean_2010_ECCO_V4r4_native_llc0090.nc": "a957bd1d133156b0ad6dd611bd39af7a",
 }
 
 ECCO_VOLUME_FLUX_FILES = sorted(
@@ -120,8 +114,8 @@ def download_ECCO_geometry(data_dir="../data"):
 
 
 def download_ECCO_volume_flux(data_dir="../data"):
-    """Return a sorted list of the twelve 2010 monthly volume-flux files, fetching
-    any that are missing from Zenodo.
+    """Return the local paths of the 2010 monthly volume-flux data (currently a single
+    file covering all twelve months), fetching from Zenodo any that are missing.
 
     These files hold the native 'left'-staggered mass-weighted velocities
     ``UVELMASS`` (on the cell 'u'/west face, dims ``(k, tile, j, i_g)``) and
@@ -187,8 +181,9 @@ def load_ECCO_MOC_grid(data_dir="../data"):
     Same native ('left') multi-tile grid as ``load_ECCO_LLC90_grid``, but the
     dataset additionally carries ``utr``/``vtr`` -- the volume transports (m^3/s)
     across the U (west) and V (south) cell faces, with vertical dimension ``k``
-    (depth coordinate ``Z``), time-averaged over the twelve months of 2010 -- ready
-    to pass to ``sectionate.transports.convergent_transport`` as
-    ``utr="utr", vtr="vtr"``.
+    (depth coordinate ``Z``) and a length-12 ``time`` dimension holding the twelve
+    2010 monthly means -- ready to pass to
+    ``sectionate.transports.convergent_transport`` as ``utr="utr", vtr="vtr"``
+    (average over ``time`` first for an annual-mean overturning).
     """
     return _ecco_grid(_ecco_dataset(data_dir=data_dir, with_transports=True))

@@ -4,14 +4,12 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-Sectionate is a Python package for sampling grid-consistent hydrographic sections from structured ocean model outputs (e.g. MOM6). It traces paths along C-grid velocity faces between geographic waypoints and computes transports/tracer values along those sections. Only structured grids are supported.
+Sectionate is a Python package for sampling grid-consistent hydrographic sections from structured ocean model outputs. It traces paths along C-grid velocity faces between geographic waypoints and computes transports/tracer values along those sections. It supports any structured model whose grid can be described by an `xgcm.Grid` object.
 
 ## Development Setup
 
 **One conda environment per branch/worktree, named `docs_env_sectionate_<branch-or-worktree-name>`.**
-Branches diverge in their dependencies — the xgcm floor in particular — so a single
-shared environment silently tests the wrong versions. Create it from
-`docs/environment.yml`, overriding the baked-in `name:` with `-n`:
+Create it from `docs/environment.yml`, overriding the baked-in `name:` with `-n`:
 
 ```bash
 ENV="docs_env_sectionate_$(git rev-parse --abbrev-ref HEAD)"
@@ -28,21 +26,14 @@ with `conda env remove -n "$ENV"` once the branch or worktree is gone.
 (`ci/environment.yml` is the minimal CI environment — pytest only, no plotting or
 notebook stack. It is not sufficient for the notebooks.)
 
-The environment must carry **xgcm >= 0.10.1**, which
-introduces the bipolar north fold (`padding={"Y": {"fold": ...}}`, formerly #711),
-the face-connection padding fix (#712), and the bare-`DataArray` `other_component`
-vector-pad fix (#749). It is a plain PyPI release, so `pip install -e .` pulls it in
-automatically (sectionate requires `xgcm>=0.10.1`). The ECCO example (notebook 5)
-pulls its data subset from Zenodo (concept DOI `10.5281/zenodo.21051424`) via stdlib
-`urllib` with MD5 checks — no `earthaccess`/Earthdata login needed.
-
 A correctly set up environment runs the full suite with **0 skips**. Skips mean one of
-two things: fold and multi-tile tests `skip` on `xgcm < 0.10.1`, and the ECCO LLC90 and
-MOM6-fold tests `skip` when their example data is absent from `data/`. In a fresh
-worktree the latter is the usual cause — `data/` holds ~1.4 GB of downloaded input that
-each checkout otherwise re-fetches. Symlink it from a checkout that already has it
-rather than downloading again (`data/*.nc` is gitignored, but `MOM5_global_example_grid.nc`
-is tracked, so link the individual files, not the directory):
+two things: fold and multi-tile tests `skip` on an xgcm older than the floor in
+`pyproject.toml`, and the ECCO LLC90 and MOM6-fold tests `skip` when their example data
+is absent from `data/`. In a fresh worktree the latter is the usual cause — `data/`
+holds ~1.4 GB of downloaded input that each checkout otherwise re-fetches. Symlink it
+from a checkout that already has it rather than downloading again (`data/*.nc` is
+gitignored, but `MOM5_global_example_grid.nc` is tracked, so link the individual files,
+not the directory):
 
 ```bash
 cd data && for f in /path/to/other/checkout/data/*.nc; do
@@ -152,7 +143,7 @@ The package is organized around a pipeline: define sections → map to grid → 
 
 - **`tracers.py`** — `extract_tracer()` interpolates tracer data to U/V points along a section path for cross-section plotting.
 
-- **`gridutils.py`** — Grid introspection utilities: `corner_position()` returns the shared vorticity corner position (`"outer"`, `"right"`, or `"left"`) and `corner_offset()` the corresponding velocity index shift used throughout transports/tracers; `check_outer()` is a thin wrapper (True iff `"outer"`). (Package source names positions only by these xgcm labels; their correspondence to MOM6/MITgcm/ECCO conventions is documented under "Corner staggering" below and in the example notebooks.) `coord_dict()` and `get_geo_corners()` extract coordinate/dimension names from `xgcm.Grid` metadata; `build_neighbor_maps()` builds the topology-aware neighbor maps the pathfinder consumes. For single-tile grids these come from xgcm halo padding; for every multi-tile grid they are projected from **`outer_topology(grid)`** (cached `_OuterTopology`), which reconstructs each face's full 'outer' (shared-corner) lattice, resolves every extended corner slot to the native corner storing that physical point (topological matching of the surrounding tracer cells — including a diagonal-cell recovery for normal-seam face corners and a 3-cell fingerprint for 3-tile junctions with native storage — with a small coordinate fallback only for the polar-cut corners no cell fingerprint can determine), and merges slots into physical corner *nodes* — so rotated/reversed seams, cube-vertex/tile junctions, boundary folds (e.g. LLC's south rows), and the polar grid cut are ordinary graph nodes, each resolved to its canonical native `(face, j, i)` (a physical corner may be stored once, on no face, or more than once). `_OuterTopology.padded_transports(u, v)` extends native transports to the outer lattice by reading each missing edge slot's *stored* twin through the node graph — a topology-exact, xgcm-independent alternative to `xgcm.pad(..., other_component=...)` (cell convergence built from `padded_transports` sums to exactly zero globally on ECCO LLC90). Even a correct vector pad (xgcm#749 fixes the bare-DataArray path; the dict form was always exact) cannot supply a halo for edges stored on *no* face, so `padded_transports` remains the exact path on grids with cuts/caps. Points stored on **no** face (a cubed-sphere stores `6N²` corners for `6N²+2` points; LLC90's 4th Arctic-cap vertex; the unstored lip of its 65°E/115°W polar grid cut under Antarctica) become edge-less nodes: sections and traced boundaries cannot pass through them and raise an error rather than return invalid indices.
+- **`gridutils.py`** — Grid introspection utilities: `corner_position()` returns the shared vorticity corner position (`"outer"`, `"right"`, or `"left"`) and `corner_offset()` the corresponding velocity index shift used throughout transports/tracers; `check_outer()` is a thin wrapper (True iff `"outer"`). (Package source names positions only by these xgcm labels; their correspondence to MOM6/MITgcm/ECCO conventions is documented under "Corner staggering" below and in the example notebooks.) `coord_dict()` and `get_geo_corners()` extract coordinate/dimension names from `xgcm.Grid` metadata; `build_neighbor_maps()` builds the topology-aware neighbor maps the pathfinder consumes. For single-tile grids these come from xgcm halo padding; for every multi-tile grid they are projected from **`outer_topology(grid)`** (cached `_OuterTopology`), which reconstructs each face's full 'outer' (shared-corner) lattice, resolves every extended corner slot to the native corner storing that physical point (topological matching of the surrounding tracer cells — a corner's *fingerprint* — including a diagonal-cell recovery for normal-seam face corners and a 3-cell fingerprint for 3-tile junctions with native storage, with a small coordinate fallback only where too few of those cells survive to identify a corner at all, as where a face's edge runs into a grid cut that reaches a pole), and merges slots into physical corner *nodes* — so rotated/reversed seams, cube-vertex/tile junctions, boundary folds (e.g. LLC's south rows), and grid cuts are ordinary graph nodes, each resolved to its canonical native `(face, j, i)` (a physical corner may be stored once, on no face, or more than once). `_OuterTopology.padded_transports(u, v)` extends native transports to the outer lattice by reading each missing edge slot's *stored* twin through the node graph — a topology-exact alternative to `xgcm.pad(..., other_component=...)` (cell convergence built from `padded_transports` sums to exactly zero globally on ECCO LLC90, where it agrees bit-for-bit with the dict-form vector pad against the pinned xgcm). What it buys over a **vector** pad is three things: it needs no vector rotation (every slot is filled with a value already stored in the frame it is read in, so nothing can be wrong about how a rotated or reversed seam maps `u` onto `v`); it takes plain arrays instead of an `{axis: component}` mapping; and it is independent of the axis `fill_value` — an edge stored on *no* face resolves to 0.0, where a halo pad can only insert the declared `fill_value` (on the cubed-sphere fixture, `fill_value=np.nan`, a vector pad leaves 23 of 128 cells' convergence NaN). For an open wall 0.0 is the truth; for a cut lip or an un-stored cap vertex the edge exists but is stored nowhere, so 0.0 is the conservative choice rather than a truth. It is *not* independent of xgcm's **scalar** padding: `_OuterTopology` builds the node graph in the first place by padding tracer-cell ids with the grid's own `face_connections` via `xgcm.padding.pad`. Points stored on **no** face (a cubed-sphere stores `6N²` corners for `6N²+2` points; LLC90's 4th Arctic-cap vertex; the unstored lip of its 65°E/115°W polar grid cut under Antarctica) become edge-less nodes: sections and traced boundaries cannot pass through them and raise an error rather than return invalid indices.
 
 - **`utils.py`** — Section catalog I/O. Sections can be loaded by name from JSON catalog files in `sectionate/catalog/`. Also provides `save_gridded_section()`/`load_gridded_section()` for persisting gridded sections.
 

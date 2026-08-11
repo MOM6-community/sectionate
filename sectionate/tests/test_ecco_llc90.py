@@ -52,8 +52,13 @@ def test_llc90_outer_topology_builds_and_is_well_formed():
 def test_llc90_three_tile_junction_resolves_to_one_node():
     """The tiles-2/6/10 three-tile junction (a corner where three rotated tiles
     meet, stored on no face) must resolve to a SINGLE node whose representations
-    span all three tiles -- the topological `by_junction` merge, not three split
-    degree-0 nodes that would leak convergence (regression for #49)."""
+    span all three tiles -- the topological `by_junction` merge.
+
+    Regression: when the three tiles' extrapolated coordinates for that corner
+    disagreed, the coordinate merges could not see it was one physical point and
+    the junction split into three separate degree-0 nodes. The velocity faces
+    around it then read as zero from every neighbour's frame, leaking a spurious
+    convergence into the junction's cells."""
     from sectionate.gridutils import outer_topology
     ot = outer_topology(_load_grid())
 
