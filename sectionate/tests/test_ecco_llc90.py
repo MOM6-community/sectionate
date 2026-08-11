@@ -97,3 +97,46 @@ def test_llc90_face_corners_resolve_topologically():
         assert fm.shape == jm.shape == im.shape
         assert (fm >= 0).all() and (fm < nf).all()
         assert (jm >= 0).all() and (im >= 0).all()
+
+
+def test_llc90_meridional_segment_traces_both_directions():
+    """A meridional segment on a real multi-tile grid, under
+    ``curve="latitude and great circle"``. Its endpoints do not share a latitude, so the
+    combined option routes it to the geodesic -- which is what makes it traceable at all:
+    the constant-latitude metrics measure progress purely in longitude, so along a
+    meridian they are flat, the walk never converges, and it eventually gives up with
+    "Should have reached the endpoint by now." Being direction-independent, it must also
+    trace identically whichever end it starts from."""
+    from sectionate.section import grid_section
+
+    grid = _load_grid()
+    fwd = grid_section(grid, [0., 0.], [60., 80.], curve="latitude and great circle")
+    rev = grid_section(grid, [0., 0.], [80., 60.], curve="latitude and great circle")
+
+    i, j, f, lons, lats = fwd
+    assert len(i) == 49
+    assert lats[0] < lats[-1]                               # it really does head north
+    for a, b in zip(fwd, rev):
+        assert np.array_equal(a, b[::-1])
+
+    # curve="latitude circle" refuses the same segment outright rather than walking it.
+    with pytest.raises(ValueError, match="constant latitude"):
+        grid_section(grid, [0., 0.], [60., 80.], curve="latitude circle")
+
+
+def test_llc90_zonal_segment_holds_its_parallel():
+    """The complement of the test above: a segment whose endpoints do share a latitude is
+    routed to the parallel by the combined option, giving the same path as an explicit
+    ``curve="latitude circle"``. The grid stores its corner latitudes in float32, so this
+    also exercises the classification tolerance on real single-precision coordinates."""
+    from sectionate.section import grid_section
+
+    grid = _load_grid()
+    combined = grid_section(grid, [0., 60.], [20., 20.],
+                            curve="latitude and great circle")
+    parallel = grid_section(grid, [0., 60.], [20., 20.], curve="latitude circle")
+    for a, b in zip(combined, parallel):
+        assert np.array_equal(a, b)
+
+    lats = combined[4]
+    assert np.ptp(lats) < 2.                                # stays within a cell of 20N
