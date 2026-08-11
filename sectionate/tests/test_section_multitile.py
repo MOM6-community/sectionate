@@ -534,12 +534,13 @@ def test_face_glued_to_itself_raises():
                1: {"X": (None, None)}}}, TypeError),
 ])
 def test_xgcm_rejects_broken_face_connections_at_construction(fc, exc):
-    """xgcm -- not sectionate -- is what enforces that every face named as a neighbour
-    exists and that every connection is mutual: `xgcm.Grid.__init__` aborts on both while
-    it builds its face-connection table, so no such grid can ever reach `grid_section`.
-    `_check_supported_topology` restates both as defence in depth; this test pins where
-    the real enforcement lives, so that if xgcm ever stops doing it the backstop's status
-    is revisited rather than silently relied on."""
+    """xgcm -- not sectionate -- enforces that every face named as a neighbour exists and
+    that every connection is mutual: `xgcm.Grid.__init__` aborts on both while it builds
+    its face-connection table, so no such grid can reach `grid_section` in the first place.
+
+    This is why `_check_supported_topology` does not re-check either one. The test pins
+    that upstream contract, so that if xgcm ever stops enforcing it we find out here rather
+    than by tracing a section through a topology nothing validated."""
     ng = 6
     lon = np.zeros((2, ng, ng)); lat = np.zeros((2, ng, ng))
     with pytest.raises(exc):
@@ -569,13 +570,8 @@ def test_supported_multitile_topologies_pass_the_check():
     _check_supported_topology(llc90)
 
 
-def test_non_zero_based_face_labels_pass_the_check():
-    """Face labels need not be 0..N-1. A grid labelled `face = [1, 2]` is perfectly legal
-    -- xgcm accepts it and keys `face_connections` by those labels -- so the check must
-    read the labels themselves, not assume a range. (It previously built the set of known
-    faces as `range(n_faces)`, and rejected this grid for naming face 2 as a neighbour.)"""
-    from sectionate.section import _check_supported_topology
-
+def _labelled_grid(face_connections, labels=(1, 2)):
+    """A two-face 'outer' grid whose face coordinate carries arbitrary labels."""
     ng = 6
     lon = np.zeros((2, ng, ng)); lat = np.zeros((2, ng, ng))
     lon[0] = np.broadcast_to(np.linspace(0, 90, ng), (ng, ng))
@@ -583,18 +579,41 @@ def test_non_zero_based_face_labels_pass_the_check():
     ds = xr.Dataset({}, coords={
         "xg": (("xg",), np.arange(ng)),
         "yg": (("yg",), np.arange(ng)),
-        "face": (("face",), np.array([1, 2])),
+        "face": (("face",), np.array(labels)),
         "geolon_c": (("face", "yg", "xg"), lon),
         "geolat_c": (("face", "yg", "xg"), lat),
     })
-    grid = xgcm.Grid(
+    return xgcm.Grid(
         ds, coords={"X": {"outer": "xg"}, "Y": {"outer": "yg"}},
         padding="fill", fill_value=np.nan,
-        face_connections={"face": {1: {"X": (None, (2, "X", False))},
-                                   2: {"X": ((1, "X", False), None)}}},
+        face_connections={"face": face_connections},
         autoparse_metadata=False,
     )
-    _check_supported_topology(grid)
+
+
+def test_check_reads_face_labels_not_positions():
+    """Face labels need not be 0..N-1: a grid labelled `face = [1, 2]` is legal, and xgcm
+    keys `face_connections` by those labels. The check must therefore compare labels, never
+    positions along the face dimension.
+
+    Both directions are pinned. A legal `[1, 2]` grid must pass -- an earlier version built
+    its set of known faces as `range(n_faces)` and rejected this grid for naming a face 2
+    it thought did not exist. And a `[1, 2]` grid whose face 2 is glued to itself must still
+    be caught, and named as face 2, which is what would break if the surviving comparison
+    ever drifted back to positions."""
+    from sectionate.section import _check_supported_topology
+
+    _check_supported_topology(_labelled_grid(
+        {1: {"X": (None, (2, "X", False))},
+         2: {"X": ((1, "X", False), None)}}
+    ))
+
+    glued = _labelled_grid(
+        {1: {"X": (None, (2, "X", False))},
+         2: {"X": ((1, "X", False), None), "Y": ((2, "Y", True), (2, "Y", True))}}
+    )
+    with pytest.raises(NotImplementedError, match="Face 2 .* glued to itself"):
+        _check_supported_topology(glued)
 
 
 def test_in_velocity_range_rejects_unknown_component():
