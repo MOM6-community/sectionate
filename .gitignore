@@ -102,3 +102,6 @@ venv.bak/
 
 # mypy
 .mypy_cache/
+
+# Version file generated from the git tag by hatch-vcs at build time.
+sectionate/_version.py
