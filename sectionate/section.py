@@ -707,9 +707,6 @@ def infer_grid_path(i1, j1, i2, j2, gridlon, gridlat, neighbor_maps, f1=None, f2
     lon1, lat1 = coord(gridlon, f1, j1, i1), coord(gridlat, f1, j1, i1)
     lon2, lat2 = coord(gridlon, f2, j2, i2), coord(gridlat, f2, j2, i2)
 
-    # Which curve this segment follows. `infer_grid_path_from_geo` has normally resolved
-    # it already, from the requested waypoints; resolving again here is a no-op for it and
-    # makes all three `CURVES` usable when this function is called directly with indices.
     segment_curve = _segment_curve(lat1, lat2, curve)
 
     # Per-curve metrics used by the deterministic neighbor selection below.
