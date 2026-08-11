@@ -289,26 +289,17 @@ def grid_section(grid, lons, lats, curve="great circle"):
         - "great circle" (default): every segment follows the geodesic.
         - "latitude circle": every segment follows a circle of constant latitude, marching
           in longitude. A segment whose endpoints do not share a latitude (to within
-          1.e-6 degrees) lies on no such circle, so it raises a ValueError -- meridional
-          segments included.
+          1.e-6 degrees) lies on no such circle, so it raises a ValueError.
         - "latitude and great circle": decided per segment. A segment whose endpoints
           share a latitude follows the parallel; every other segment follows the geodesic.
-          This is the option for a section that is zonal in places and joined up by
-          meridional or slanted legs elsewhere.
+          This is the option for a section that is zonal in places and joined up by arbitrarily
+          oriented legs elsewhere.
 
         Under every option each segment takes the **shortest** path between its two
         vertices. Raw longitudes are never read as a request to go the long way round, so
-        a segment written 0 -> 270 along a parallel runs 90 degrees *west*. Encircle the
+        a segment written 0 -> 270 along the equator runs 90 degrees *west*. Encircle the
         globe by giving intermediate vertices (e.g. 0 -> 120 -> 240 -> 360), which is also
         what says which way round it goes.
-
-        A ValueError is also raised for a segment whose endpoints are written exactly half
-        a circle apart -- antipodal for a geodesic segment, or exactly +/-180 degrees of
-        longitude apart for one along a parallel -- because then neither way round is the
-        shorter. That check only catches endpoints typed as exactly half a circle apart:
-        a hair short of it, which way the segment runs is decided by the sign of the
-        round-off, so subdivide near-half-circle segments with an intermediate vertex
-        rather than expecting to be warned about them.
 
     Returns
     -------
