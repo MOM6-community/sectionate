@@ -45,7 +45,31 @@ done
 
 - **Run all tests:** `pytest`
 - **Run a single test:** `pytest sectionate/tests/test_section.py::test_find_closest_grid_point`
-- **Build docs:** `cd docs && make html` (requires `docs/environment.yml` environment)
+- **Build docs:** `cd docs && make html` (requires `docs/environment.yml` environment).
+  Add `SPHINXOPTS="-W"` to reproduce Read the Docs, which builds with `fail_on_warning: true`.
+
+## Documentation pages and figures
+
+`docs/source/` is Sphinx: `.rst` and MyST `.md` pages are hand-written, while
+`docs/source/examples/` is **generated** — `conf.py` deletes and re-copies it from
+`examples/*.ipynb` on every build, so never put a hand-written page or a static asset there.
+Both `nbsphinx` (notebooks) and `myst_parser` (`.md`) are enabled. Every new page must be
+added to the toctree in `docs/source/index.rst` in the same change, or the build fails.
+
+The figures on `docs/source/algorithm.md` are **committed artifacts**, because Read the Docs
+never executes anything (`nbsphinx_execute = "never"`). Regenerate them with:
+
+```bash
+python docs/make_algorithm_animation.py    # needs ffmpeg, from docs/environment.yml
+```
+
+It writes `docs/source/_static/algorithm/{walk.mp4,walk_steps.png}`. The script replays
+`sectionate.section.infer_grid_path` step by step to record per-step state for drawing, then
+**asserts that its replayed path matches `grid_section`** — so a change to the walk makes
+regeneration fail loudly instead of letting the page drift out of sync. If that assertion
+fires, the page prose almost certainly needs updating too. Keep the two artifacts small
+(currently ~0.5 MB combined): `docs/**` is not excluded from the sdist by `pyproject.toml`,
+so they ship to PyPI and live in git history permanently.
 
 ## Definition of Done (always, before committing or pushing)
 
@@ -113,7 +137,7 @@ The package is organized around a pipeline: define sections → map to grid → 
 
 ### Core Modules
 
-- **`section.py`** — Section definition and grid path algorithms. `Section` holds named waypoint coordinates; `GriddedSection` extends it with grid index information. `grid_section()` is the main entry point that maps geographic waypoints to grid vorticity-point indices `(i_c, j_c)` by walking the grid between waypoints along the `curve` requested (`"great circle"`, the default geodesic, or `"latitude circle"`); each segment must span less than 180°. The walk is deterministic and direction-independent: it admits neighbors strictly closer to the endpoint plus any seam twin of the current cell (so periodic/fold-seam crossings do not depend on floating-point rounding), and breaks ties by index. Grid topology is inferred entirely from `xgcm.Grid` metadata — each axis' `boundary` (periodic wrap, fill/extend wall, or a single-tile bipolar north fold `{"Y": {"fold": ...}}`) and `face_connections` for multi-tile grids — so there is no `topology` keyword. The pathfinder consumes topology-aware neighbor maps built by `gridutils.build_neighbor_maps`.
+- **`section.py`** — Section definition and grid path algorithms. `Section` holds named waypoint coordinates; `GriddedSection` extends it with grid index information. `grid_section()` is the main entry point that maps geographic waypoints to grid vorticity-point indices `(i_c, j_c)` by walking the grid between waypoints along the `curve` requested. There are three: `"great circle"` (the default — every segment follows the geodesic), `"latitude circle"` (every segment follows a parallel, and a segment whose endpoints do not share a latitude — meridional ones included — raises), and `"latitude and great circle"` (decided per segment: constant-latitude segments follow the parallel, all others the geodesic). Under all three, every segment follows the **shortest** path between its two waypoints — raw longitudes are never read as a request to go the long way round, so a `"latitude circle"` segment written `0 -> 270` runs 90° *west* — which is why encircling the globe takes intermediate waypoints (e.g. `0 -> 120 -> 240 -> 360`). `_check_segment_span` resolves each segment's curve (via `_is_constant_latitude`, the one classification the metric choice and the legality check share) and raises for ill-posed ones: endpoints written exactly half a circle apart (neither way round is shorter — one error shared by all curves, quoting degrees of longitude along the parallel or degrees of arc, as applicable), or, under `"latitude circle"`, endpoints that do not share a latitude. The walk is deterministic and direction-independent: it admits neighbors strictly closer to the endpoint plus any seam twin of the current cell (so periodic/fold-seam crossings do not depend on floating-point rounding), and breaks ties by index. Grid topology is inferred entirely from `xgcm.Grid` metadata — each axis' `boundary` (periodic wrap, fill/extend wall, or a single-tile bipolar north fold `{"Y": {"fold": ...}}`) and `face_connections` for multi-tile grids — so there is no `topology` keyword. The pathfinder consumes topology-aware neighbor maps built by `gridutils.build_neighbor_maps`.
 
 - **`transports.py`** — Transport computation along sections. `uvindices_from_qindices()` converts vorticity-point indices to U/V velocity-point indices using a per-position corner offset (`gridutils.corner_offset`) covering all three C-grid staggerings: 'outer', 'right', and 'left' (see "Corner staggering" below). `convergent_transport()` is the main function: it lazily computes signed normal transports with configurable orientation (positive inward to the polygon defined by the section).
 
