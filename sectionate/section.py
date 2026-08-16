@@ -522,7 +522,9 @@ def infer_grid_path(i1, j1, i2, j2, gridlon, gridlat, boundary={"X":"periodic", 
         - "tripolar-Fpivot": the NEMO ORCA tripolar grid pivoting on F points
     curve: str
         The type of curve to follow between pairs of coords. 
-        Options are ["great circle", "latitude circle", "latitude and great circle"].
+        Options are ["great circle", "latitude circle"].
+        Note "latitude and great circle" is an option for `infer_grid_path_from_geo` where exact latitudes are given,
+        but not here where the latitudes are taken from `gridlat`.
         Default: "great circle".
 
     RETURNS:
@@ -566,7 +568,7 @@ def infer_grid_path(i1, j1, i2, j2, gridlon, gridlat, boundary={"X":"periodic", 
         dist_to_curve = _latitude_abs_difference
         dist_to_end = _longitude_monotonic_distance
     else:
-        raise ValueError(f"Curve must be 'great circle' or 'latitude circle' or 'latitude and great circle'. Got {curve}")
+        raise ValueError(f"Curve must be 'great circle' or 'latitude circle'. Got {curve}")
 
     # iterate through the grid path steps until we reach end of section
     ct = 0 # grid path step counter
