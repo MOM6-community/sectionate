@@ -458,6 +458,12 @@ def infer_grid_path_from_geo(lonstart, latstart, lonend, latend, gridlon, gridla
         (lons_c, lats_c) are the corresponding longitude and latitudes.
     """
 
+    if curve == "latitude and great circle":
+        if latstart == latend:
+            curve = "latitude circle"
+        else:
+            curve = "great circle"
+
     istart, jstart = find_closest_grid_point(
         lonstart,
         latstart,
@@ -552,11 +558,6 @@ def infer_grid_path(i1, j1, i2, j2, gridlon, gridlat, boundary={"X":"periodic", 
     # Pick functions to measure closeness of candidate point to
     # (a) desired curve between (lon1, lat1) and (lon2, lat2), 
     # (b) the end point (lon2, lat2).
-    if curve == "latitude and great circle":
-        if lat1 == lat2:
-            curve = "latitude circle"
-        else:
-            curve = "great circle"
     if curve == "great circle":
         dist_to_curve = spherical_angle
         # dist_to_curve = distance_to_endpoint  # alternative to spherical_angle: sum the distance to each endpoint. Changes the results very slightly.
