@@ -47,21 +47,28 @@ def test_find_closest_grid_point():
 def test_grid_path():
     from sectionate.section import infer_grid_path
 
-    # test zonal line
-    isec, jsec, lonsec, latsec = infer_grid_path(0, 80, 179, 80, lon, lat)
+    # test great circle as a latitude circle at the equator
+    assert all(lat[80,:] == 0)
+    isec, jsec, lonsec, latsec = infer_grid_path(0, 80, 179, 80, lon, lat, curve="great circle")
     assert len(isec) == 180
     assert lonsec[0] == 0.0
     assert lonsec[-1] == 179.0
     assert latsec[0] == 0.0
     assert latsec[-1] == 0.0
 
+    # test latitude circle off the equator
+    isec, jsec, lonsec, latsec = infer_grid_path(0, 20, 179, 20, lon, lat, curve="latitude circle")
+    assert len(isec) == 180
+    assert lonsec[0] == 0.0
+    assert lonsec[-1] == 179.0
+    assert all(latsec == lat[20, 0])
+
     # test merid line
-    isec, jsec, lonsec, latsec = infer_grid_path(0, 0, 0, 160, lon, lat)
+    isec, jsec, lonsec, latsec = infer_grid_path(7, 0, 7, 160, lon, lat, curve="great circle")
     assert len(isec) == 161
-    assert lonsec[0] == 0.
-    assert lonsec[-1] == 0.
-    assert latsec[0] == -80.0
-    assert latsec[-1] == 80.0
+    assert all(lonsec == lon[0, 7])
+    assert latsec[0] == lat[0, 7]
+    assert latsec[-1] == lat[160, 7]
 
     # test diagonal
     isec, jsec, lonsec, latsec = infer_grid_path(0, 0, 100, 100, lon, lat)
@@ -75,18 +82,23 @@ def test_grid_path():
 def test_infer_grid_path_from_geo():
     from sectionate.section import infer_grid_path_from_geo
 
-    # test zonal line
-    isec, jsec, lonsec, latsec = infer_grid_path_from_geo(0, 0, 179, 0, lon, lat)
+    # test great circle as a latitude circle at the equator
+    isec, jsec, lonsec, latsec = infer_grid_path_from_geo(0, 0, 179, 0, lon, lat, curve="great circle")
     assert len(isec) == 180
     assert lonsec[0] == 0.0
     assert lonsec[-1] == 179.0
-    assert latsec[0] == 0.0
-    assert latsec[-1] == 0.0
+    assert all(latsec == 0.0)
 
     # test merid line
-    isec, jsec, lonsec, latsec = infer_grid_path_from_geo(180, -80, 180, 80, lon, lat)
+    isec, jsec, lonsec, latsec = infer_grid_path_from_geo(180, -80, 180, 80, lon, lat, curve="great circle")
     assert len(isec) == 161
-    assert lonsec[0]  == 180.0
-    assert lonsec[-1] == 180.0
+    assert all(lonsec  == 180.0)
     assert latsec[0]  == -80.0
     assert latsec[-1] == 80.0
+
+    # test latitude circle off the equator
+    isec, jsec, lonsec, latsec = infer_grid_path_from_geo(0, -60, 179, -60, lon, lat, curve="latitude circle")
+    assert len(isec) == 180
+    assert lonsec[0] == 0.0
+    assert lonsec[-1] == 179.0
+    assert all(latsec == -60)
