@@ -833,8 +833,8 @@ def spherical_angle(lonA, latA, lonB, latB, lonC, latC):
     return np.arccos(np.clip((np.cos(a) - np.cos(b)*np.cos(c))/(np.sin(b)*np.sin(c)), -1., 1.))
 
 def _latitude_abs_difference(lonA, latA, lonB, latB, lonC, latC):
-    # Calculate the absolute value of the difference between latA and latC
-    return abs(latA - latC)
+    # Calculate the absolute value of the difference between 0.5*(latA + latB) and latC
+    return abs(0.5 * (latA + latB) - latC)
 
 def _longitude_monotonic_distance(lonA, latA, lonB, latB):
     # Evaluate a monotonic function of the distance between lonA and lonB at the same latitude.
