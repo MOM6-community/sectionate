@@ -291,8 +291,11 @@ def convergent_transport(
     orient_fact = 1 if positive_in else -1
     
     coords = coord_dict(grid)
+    # `usel` is applied to every point of the section and the V points are masked out afterwards. On a
+    # non-symmetric grid, the "X" index of a V point at the periodic seam is one past the last U point,
+    # so clip it to a valid index; this never changes the index of a U point.
     usel = {
-        coords["X"]["corner"]: sect["i"],
+        coords["X"]["corner"]: np.minimum(sect["i"], grid._ds[coords["X"]["corner"]].size-1),
         coords["Y"]["center"]: wrap_idx(sect["j"], grid, "Y")
     }
     vsel = {
