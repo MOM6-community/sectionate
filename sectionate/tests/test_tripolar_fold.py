@@ -251,3 +251,54 @@ def test_latitude_circle_across_fold_with_offset_m1(lat):
     transport, _, j_c = section_transport(grid, lons, np.full(lons.size, lat))
     assert j_c.max() == grid._ds.yq.size - 1        # the section does reach the fold
     assert abs(transport) < 1.e-10
+
+
+def fold_row_section(grid):
+    """A section between two points on opposite sides of the cap, which runs along the fold."""
+    i_c, j_c, _, _ = grid_section(grid, [LON0 + 40., LON0 + 220.], [70., 70.], topology="MOM-tripolar")
+    return i_c, j_c
+
+
+@pytest.mark.parametrize("make_grid", [
+    lambda: tripolar_grid(True), lambda: tripolar_grid(False), lambda: tripolar_grid_offset_m1(),
+], ids=["symmetric", "non-symmetric", "offset -1"])
+def test_tracer_on_fold_row_uses_cell_across_fold(make_grid):
+    """A V point on the fold lies between a top-row cell and the cell across the fold -- not the cell at
+    the opposite (southern) edge of the grid."""
+    from sectionate.tracers import extract_tracer
+    from sectionate.transports import uvindices_from_qindices, uvcoords_from_uvindices
+    grid = make_grid()
+    grid._ds["tracer"] = (("yh", "xh"), grid._ds.geolat.values)      # tracer = latitude
+    i_c, j_c = fold_row_section(grid)
+    uv = uvindices_from_qindices(grid, i_c, j_c)
+    _, lats_uv = uvcoords_from_uvindices(grid, uv)
+    on_fold = (uv["var"] == "V") & (lats_uv > grid._ds.geolat.values.max())
+    assert on_fold.any()                                               # the section runs along the fold
+    tracer = extract_tracer("tracer", grid, i_c, j_c, topology="MOM-tripolar").values
+    assert tracer.size == lats_uv.size
+    assert np.all(np.abs(tracer - lats_uv) < 1.5)                      # within a cell of the velocity point
+    # without the topology, the top row is an edge of the grid: the one cell below the fold
+    edge = extract_tracer("tracer", grid, i_c, j_c).values
+    assert np.all(np.abs(edge - lats_uv) < 1.5)
+
+    # ... and it is the right cell across the fold: the two cells either side of a velocity point on
+    # the fold are the two top-row cells whose centres are nearest to it
+    from sectionate.section import distance_on_unit_sphere
+    values = np.random.default_rng(2).standard_normal(grid._ds.geolat.shape)
+    grid._ds["random"] = (("yh", "xh"), values)
+    random = extract_tracer("random", grid, i_c, j_c, topology="MOM-tripolar").values
+    lons_uv, _ = uvcoords_from_uvindices(grid, uv)
+    for k in np.flatnonzero(on_fold):
+        d = distance_on_unit_sphere(lons_uv[k], lats_uv[k], grid._ds.geolon.values[-1], grid._ds.geolat.values[-1])
+        nearest = np.argsort(d)[:2]
+        assert np.isclose(random[k], values[-1, nearest].mean())
+
+
+def test_tracer_at_edge_of_grid_uses_interior_cell():
+    """A V point on the southern edge of the grid has one cell next to it; the tracer is that cell's."""
+    from sectionate.tracers import extract_tracer
+    grid = tripolar_grid(True)
+    grid._ds["tracer"] = (("yh", "xh"), grid._ds.geolat.values)
+    i_c, j_c = np.array([10, 11, 12]), np.array([0, 0, 0])
+    tracer = extract_tracer("tracer", grid, i_c, j_c).values
+    assert np.allclose(tracer, grid._ds.geolat.values[0, 10:12])
