@@ -663,7 +663,10 @@ def fold_partner_offset(gridlon, gridlat):
             return s
     raise ValueError(
         "topology='MOM-tripolar', but the top row of vorticity points does not fold onto itself "
-        "((ny-1, i) coincides with none of (ny-1, (s - i) % nx) for s in (0, -1, -2))."
+        "((ny-1, i) coincides with none of (ny-1, (s - i) % nx) for s in (0, -1, -2)). "
+        "Grids without a tripolar fold should use topology='latlon' or topology='cartesian'. "
+        "Note that regionate <= 0.5.5 passes topology='MOM-tripolar' unconditionally: if this error "
+        "was reached through regionate, upgrade to regionate >= 0.5.6."
     )
 
 
