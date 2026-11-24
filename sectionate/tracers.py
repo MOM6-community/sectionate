@@ -6,15 +6,18 @@ from .transports import (
 
 from .gridutils import (
     check_symmetric,
-    coord_dict
+    coord_dict,
+    get_geo_corners
 )
+from .section import fold_partner_offset
 
 def extract_tracer(
     name,
     grid,
     i_c,
     j_c,
-    sect_coord="sect"
+    sect_coord="sect",
+    topology="latlon"
     ):
     """
     Extract tracer data on cell thickness grid along the grid path
@@ -32,11 +35,17 @@ def extract_tracer(
         vorticity point indices along 'Y' dimension
     sect_coord: str
         Name of the dimension describing along-section data in the output. Default: 'sect'.
+    topology: str
+        Default: "latlon". Grid topology, as passed to `sectionate.grid_section` when the section was
+        created. For "MOM-tripolar", the cell on the far side of a velocity point on the top row of
+        vorticity points is the cell across the tripolar fold.
 
     RETURNS:
     --------
 
-    xarray.DataArray with data interpolated to the U and V points along the section.
+    xarray.DataArray with data interpolated to the U and V points along the section: the mean of the
+    two tracer cells either side of each velocity point, or the value of the one cell there is if the
+    other is missing (NaN) or would lie beyond a non-periodic edge of the grid.
     """
     
     da=grid._ds[name]
@@ -52,16 +61,35 @@ def extract_tracer(
     section["Umask"] = xr.DataArray(uvindices["var"]=="U", dims=sect_coord)
     section["Vmask"] = xr.DataArray(uvindices["var"]=="V", dims=sect_coord)
 
-    increment = 1 if symmetric else 0
-    usel_left  = {coords["X"]["center"]: np.mod(section["i"]-increment  , da[coords["X"]["center"]].size),
-                  coords["Y"]["center"]: np.mod(section["j"]            , da[coords["Y"]["center"]].size)}
-    usel_right = {coords["X"]["center"]: np.mod(section["i"]-increment+1, da[coords["X"]["center"]].size),
-                  coords["Y"]["center"]: np.mod(section["j"]            , da[coords["Y"]["center"]].size)}
+    Xc, Yc = coords["X"]["center"], coords["Y"]["center"]
+    nx, ny = da[Xc].size, da[Yc].size
+    periodic = {axis: grid.axes[axis]._boundary == "periodic" for axis in ["X", "Y"]}
 
-    vsel_left  = {coords["X"]["center"]: np.mod(section["i"]            , da[coords["X"]["center"]].size),
-                  coords["Y"]["center"]: np.mod(section["j"]-increment  , da[coords["Y"]["center"]].size)}
-    vsel_right = {coords["X"]["center"]: np.mod(section["i"]            , da[coords["X"]["center"]].size),
-                  coords["Y"]["center"]: np.mod(section["j"]-increment+1, da[coords["Y"]["center"]].size)}
+    fold_offset = None
+    if topology == "MOM-tripolar":
+        # Top-row vorticity point i is the same point as (s - i) % nx across the fold. Vorticity points
+        # i and i+1 (symmetric) or i-1 and i (non-symmetric) bound tracer cell i, so the cell across
+        # the fold from top-row cell i is cell (s - 1 - i) % nx or (s + 1 - i) % nx, respectively.
+        geo_corners = get_geo_corners(grid)
+        gridlon, gridlat = geo_corners["X"].values, geo_corners["Y"].values
+        if symmetric and periodic["X"]:
+            gridlon, gridlat = gridlon[:, :-1], gridlat[:, :-1]
+        fold_offset = fold_partner_offset(gridlon, gridlat) + (-1 if symmetric else 1)
+
+    def cell(i, j):
+        """Selector of the tracer cell (j, i), which may lie one cell beyond an edge of the grid."""
+        if fold_offset is not None:
+            across = j > ny-1
+            i = xr.where(across, fold_offset - i, i)
+        i = np.mod(i, nx) if periodic["X"] else np.clip(i, 0, nx-1)
+        j = np.mod(j, ny) if periodic["Y"] else np.clip(j, 0, ny-1)
+        return {Xc: i, Yc: j}
+
+    increment = 1 if symmetric else 0
+    usel_left  = cell(section["i"]-increment  , section["j"])
+    usel_right = cell(section["i"]-increment+1, section["j"])
+    vsel_left  = cell(section["i"], section["j"]-increment  )
+    vsel_right = cell(section["i"], section["j"]-increment+1)
 
     tracer = sum([
         xr.where(~np.isnan(da.isel(usel_right)), 0.5*da.isel(usel_left),  da.isel(usel_left) ).fillna(0.) * section["Umask"],

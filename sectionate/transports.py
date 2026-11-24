@@ -6,11 +6,52 @@ import dask
 from .gridutils import check_symmetric, coord_dict, get_geo_corners
 from .section import distance_on_unit_sphere
 
+def _face_steps(grid, i_c, j_c, symmetric):
+    """
+    Indices k of the steps (i_c[k], j_c[k]) -> (i_c[k+1], j_c[k+1]) that cross a velocity face.
+
+    A step between adjacent vorticity points crosses one face. A step between two indices of the same
+    geographic point (the two sides of a tripolar fold, see `sectionate.section.infer_grid_path`) crosses
+    none and is skipped. Any other step does not correspond to a velocity face, and raises an error rather
+    than silently picking one.
+    """
+    coords = coord_dict(grid)
+    periodic = grid.axes["X"]._boundary == "periodic"
+    nx = grid._ds[coords["X"]["corner"]].size - (1 if symmetric else 0)
+    geo_corners = None
+    steps = []
+    for k in range(0, len(i_c)-1):
+        di = abs(int(i_c[k+1]) - int(i_c[k]))
+        if periodic:
+            di = min(di % nx, (-di) % nx)
+        dj = abs(int(j_c[k+1]) - int(j_c[k]))
+        if di + dj == 1:
+            steps.append(k)
+            continue
+        if geo_corners is None:
+            geo_corners = {ax: np.asarray(c) for (ax, c) in get_geo_corners(grid).items()}
+        lon, lat = geo_corners["X"], geo_corners["Y"]
+        d = distance_on_unit_sphere(
+            lon[j_c[k], i_c[k]], lat[j_c[k], i_c[k]],
+            lon[j_c[k+1], i_c[k+1]], lat[j_c[k+1], i_c[k+1]],
+            R=1.
+        )
+        if d > 1.e-6:
+            raise ValueError(
+                f"Consecutive section points (j, i) = ({j_c[k]}, {i_c[k]}) and ({j_c[k+1]}, {i_c[k+1]}) "
+                "are neither adjacent grid points nor the same point, so they do not define a velocity face."
+            )
+    return steps
+
 def uvindices_from_qindices(grid, i_c, j_c):
     """
-    Find the `grid` indices of the N-1 velocity points defined by the consecutive indices of
+    Find the `grid` indices of the velocity points defined by the consecutive indices of
     N vorticity points. Follows MOM6 conventions (https://mom6.readthedocs.io/en/main/api/generated/pages/Horizontal_Indexing.html),
     automatically checking `grid` metadata to determine whether the grid is symmetric or non-symmetric.
+
+    Each step between adjacent vorticity points gives one velocity point. A step between two indices of the
+    same point (where a section crosses a tripolar fold) gives none, so for a section that crosses the fold
+    there are fewer than N-1 velocity points.
 
     PARAMETERS:
     -----------
@@ -31,16 +72,16 @@ def uvindices_from_qindices(grid, i_c, j_c):
           - "nward" : True if point was passed through while going in positive "j"-index direction
           - "eward" : True if point was passed through while going in positive "i"-index direction
     """
-    nsec = len(i_c)
-    uvindices = {
-        "var":np.zeros(nsec-1, dtype="<U2"),
-        "i":np.zeros(nsec-1, dtype=np.int64),
-        "j":np.zeros(nsec-1, dtype=np.int64),
-        "nward":np.zeros(nsec-1, dtype=bool),
-        "eward":np.zeros(nsec-1, dtype=bool)
-    }
     symmetric = check_symmetric(grid)
-    for k in range(0, nsec-1):
+    steps = _face_steps(grid, i_c, j_c, symmetric)
+    uvindices = {
+        "var":np.zeros(len(steps), dtype="<U2"),
+        "i":np.zeros(len(steps), dtype=np.int64),
+        "j":np.zeros(len(steps), dtype=np.int64),
+        "nward":np.zeros(len(steps), dtype=bool),
+        "eward":np.zeros(len(steps), dtype=bool)
+    }
+    for n, k in enumerate(steps):
         zonal = not(j_c[k+1] != j_c[k])
         eward = i_c[k+1] > i_c[k]
         nward = j_c[k+1] > j_c[k]
@@ -57,12 +98,13 @@ def uvindices_from_qindices(grid, i_c, j_c):
         uvindex["i"] += (1 if not(symmetric) and zonal else 0)
         uvindex["j"] += (1 if not(symmetric) and not(zonal) else 0)
         for (key, v) in uvindices.items():
-            v[k] = uvindex[key]
+            v[n] = uvindex[key]
     return uvindices
 
 def uvcoords_from_uvindices(grid, uvindices):
     """
-    Find the (lons,lats) coordinates of the N-1 velocity points defined by `uvindices` (returned by `uvindices_from_qindices`).
+    Find the (lons,lats) coordinates of the velocity points defined by `uvindices` (returned by `uvindices_from_qindices`):
+    one for each of them, which is fewer than N-1 for a section of N vorticity points that crosses a tripolar fold.
     Assumes the names of longitude and latitude coordinates in `grid` contain the sub-strings "lon" and "lat", respectively,
     but otherwise finds the names using `grid` metadata.
 
@@ -124,7 +166,7 @@ def uvcoords_from_uvindices(grid, uvindices):
             elif (f"geolon_corner" in corner_names) and (f"geolat_center" in center_names):
                 lon = ds[corner_names[f"geolon_corner"]].isel({
                     coords["X"]["corner"]:i,
-                    coords["Y"]["corner"]:j
+                    coords["Y"]["corner"]:wrap_corner_idx(j, grid, "Y")
                 }).values
                 lat = ds[center_names[f"geolat_center"]].isel({
                     coords["X"]["center"]:wrap_idx(i, grid, "X"),
@@ -148,8 +190,10 @@ def uvcoords_from_uvindices(grid, uvindices):
                     coords["X"]["center"]:wrap_idx(i, grid, "X"),
                     coords["Y"]["center"]:wrap_idx(j, grid, "Y")
                 }).values
+                # On a non-symmetric grid, the "X" index of a V point at the periodic seam is one past
+                # the last vorticity point, so it has to be wrapped before indexing a corner variable.
                 lat = ds[corner_names[f"geolat_corner"]].isel({
-                    coords["X"]["corner"]:i,
+                    coords["X"]["corner"]:wrap_corner_idx(i, grid, "X"),
                     coords["Y"]["corner"]:j
                 }).values
             else:
@@ -176,6 +220,9 @@ def uvcoords_from_qindices(grid, i_c, j_c):
     --------
     lons : np.ndarray(float)
     lats : np.ndarray(float)
+        One per velocity point, as returned by `uvindices_from_qindices`: N-1 for N vorticity points, or fewer
+        if the section crosses a tripolar fold (the crossing point is listed twice and has no velocity point
+        between its two indices).
     """
     return uvcoords_from_uvindices(
         grid,
@@ -291,8 +338,11 @@ def convergent_transport(
     orient_fact = 1 if positive_in else -1
     
     coords = coord_dict(grid)
+    # `usel` is applied to every point of the section and the V points are masked out afterwards. On a
+    # non-symmetric grid, the "X" index of a V point at the periodic seam is one past the last U point,
+    # so clip it to a valid index; this never changes the index of a U point.
     usel = {
-        coords["X"]["corner"]: sect["i"],
+        coords["X"]["corner"]: np.minimum(sect["i"], grid._ds[coords["X"]["corner"]].size-1),
         coords["Y"]["center"]: wrap_idx(sect["j"], grid, "Y")
     }
     vsel = {
@@ -502,4 +552,23 @@ def wrap_idx(idx, grid, axis):
         idx = np.mod(idx, grid._ds[coords[axis]["center"]].size)
     else:
         idx = np.minimum(idx, grid._ds[coords[axis]["center"]].size-1)
+    return idx
+
+
+def wrap_corner_idx(idx, grid, axis):
+    """
+    As `wrap_idx`, but for an index into the corner (vorticity-point) dimension of `axis`, whose size
+    differs from that of the center dimension on a symmetric grid.
+
+    On a periodic non-symmetric grid the index wraps around. On a symmetric grid the corner dimension
+    includes the repeated periodic point, so every index that can arise is already valid and is only
+    clipped, as on a non-periodic grid.
+    """
+    coords = coord_dict(grid)
+    n_corner = grid._ds[coords[axis]["corner"]].size
+    n_center = grid._ds[coords[axis]["center"]].size
+    if (grid.axes[axis]._boundary == "periodic") and (n_corner == n_center):
+        idx = np.mod(idx, n_corner)
+    else:
+        idx = np.minimum(idx, n_corner-1)
     return idx

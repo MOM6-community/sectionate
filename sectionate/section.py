@@ -458,12 +458,15 @@ def infer_grid_path(i1, j1, i2, j2, gridlon, gridlat, boundary={"X":"periodic", 
         Default: {"X":"periodic", "Y":"extend"}. Set to {"X":"extend", "Y":"extend"} if using a non-periodic regional domain.
     topology: str
         Default: "latlon". Currently only supports the following options: ["latlon", "cartesian", "MOM-tripolar"].
+        For "MOM-tripolar", the top row of (gridlon, gridlat) is the tripolar fold; which point on the other side
+        of the fold each top-row point coincides with is read from the coordinates (see `fold_partner_offset`).
 
     RETURNS:
     -------
 
     i_c_seg, j_c_seg: list of int
-        list of (i,j) pairs bounded by (i1, j1) and (i2, j2)
+        list of (i,j) pairs bounded by (i1, j1) and (i2, j2). Where the path crosses the tripolar fold, the
+        crossing point appears twice in a row, once with its index on each side of the fold.
     lons_c_seg, lats_c_seg: list of float
         corresponding longitude and latitude for i_c_seg, j_c_seg
     """
@@ -473,6 +476,13 @@ def infer_grid_path(i1, j1, i2, j2, gridlon, gridlat, boundary={"X":"periodic", 
         gridlon = gridlon.values
     if isinstance(gridlat, xr.core.dataarray.DataArray):
         gridlat = gridlat.values
+
+    fold = (topology == "MOM-tripolar")
+    if fold:
+        # top-row point (ny-1, i) is the same point as (ny-1, (s - i) % nx), its twin across the fold
+        s = fold_partner_offset(gridlon, gridlat)
+        def twin(i):
+            return (s - i) % nx
 
     # target coordinates
     lon1, lat1 = gridlon[j1, i1], gridlat[j1, i1]
@@ -496,6 +506,13 @@ def infer_grid_path(i1, j1, i2, j2, gridlon, gridlat, boundary={"X":"periodic", 
     j_prev, i_prev = j,i
     while (i%nx != i2) or (j != j2):
                 
+        # On the fold, the end point may have been reached from the other side of the fold, i.e. at its twin.
+        # Finish on the end point's own index so that consecutive segments join up.
+        if fold and (j == ny-1) and (j2 == ny-1) and (twin(i) == i2):
+            i_c_seg.append(i2)
+            j_c_seg.append(j2)
+            break
+
         # safety precaution: exit after taking enough steps to have crossed the entire model grid
         if ct > (nx+ny+1):
             raise RuntimeError(f"Should have reached the endpoint by now.")
@@ -522,7 +539,8 @@ def infer_grid_path(i1, j1, i2, j2, gridlon, gridlat, boundary={"X":"periodic", 
             if j!=ny-1:
                 up = (j+1, i%nx)
             else:
-                up = (j-1, (nx-1) - (i%nx))
+                # across the fold: one row down from this point's twin on the other side
+                up = (j-1, twin(i))
                 
         elif topology=="cartesian" or topology=="latlon":
                 up = (np.clip(j+1, 0, ny-1), i)
@@ -590,6 +608,13 @@ def infer_grid_path(i1, j1, i2, j2, gridlon, gridlat, boundary={"X":"periodic", 
 
         j_prev, i_prev = j,i
         
+        # Crossing the fold: the next point is adjacent to this point's twin on the other side of the fold,
+        # not to (j, i) itself. Record the twin first, so that every step of the path joins adjacent indices.
+        if fold and (j == ny-1) and ((j_next, i_next) == up) and (twin(i) != i):
+            i_c_seg.append(twin(i))
+            j_c_seg.append(j)
+            j_prev, i_prev = j, twin(i)
+
         j = j_next
         i = i_next
 
@@ -605,6 +630,45 @@ def infer_grid_path(i1, j1, i2, j2, gridlon, gridlat, boundary={"X":"periodic", 
         lons_c_seg.append(gridlon[jj, ji])
         lats_c_seg.append(gridlat[jj, ji])
     return np.array(i_c_seg), np.array(j_c_seg), np.array(lons_c_seg), np.array(lats_c_seg)
+
+
+def fold_partner_offset(gridlon, gridlat):
+    """
+    Find how the top row of a tripolar grid folds onto itself: the offset `s` such that the top-row point
+    (ny-1, i) is the same geographic point as (ny-1, (s - i) % nx).
+
+    The offset depends on where the vorticity points sit relative to the fold, so it is read from the
+    coordinates rather than assumed. With poles on vorticity points 0 and nx/2 (MOM6), `s = 0` for a
+    symmetric grid (as passed here, without its repeated periodic column) and `s = -2` for a non-symmetric
+    grid (MOM6 non-symmetric, MOM5).
+
+    PARAMETERS:
+    -----------
+    gridlon: np.ndarray
+        2d array of vorticity-point longitude, in degrees
+    gridlat: np.ndarray
+        2d array of vorticity-point latitude, in degrees
+
+    RETURNS:
+    --------
+    s : int
+    """
+    lon, lat = np.asarray(gridlon)[-1], np.asarray(gridlat)[-1]
+    nx = lon.size
+    i = np.arange(nx)
+    spacing = np.median(distance_on_unit_sphere(lon, lat, np.roll(lon, -1), np.roll(lat, -1)))
+    for s in (0, -2, -1):
+        twin = (s - i) % nx
+        if np.max(distance_on_unit_sphere(lon, lat, lon[twin], lat[twin])) < 1.e-3 * spacing:
+            return s
+    raise ValueError(
+        "topology='MOM-tripolar', but the top row of vorticity points does not fold onto itself "
+        "((ny-1, i) coincides with none of (ny-1, (s - i) % nx) for s in (0, -1, -2)). "
+        "Grids without a tripolar fold should use topology='latlon' or topology='cartesian'. "
+        "Note that regionate passes topology='MOM-tripolar' by default: if this error was reached "
+        "through regionate, pass topology='latlon' (or 'cartesian') to GriddedRegion, which needs "
+        "regionate >= 0.5.8 (regionate <= 0.5.7 always uses 'MOM-tripolar')."
+    )
 
 
 def find_closest_grid_point(lon, lat, gridlon, gridlat):
