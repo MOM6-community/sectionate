@@ -180,7 +180,7 @@ def test_tripolar_topology_on_grid_without_fold_raises():
         autoparse_metadata=False,
     )
     lons, lats = [20., 120.], [0., 20.]
-    with pytest.raises(ValueError, match=r"topology='latlon'.*regionate <= 0\.5\.7.*regionate >= 0\.5\.8"):
+    with pytest.raises(ValueError, match=r"topology='latlon'.*regionate >= 0\.5\.8.*regionate <= 0\.5\.7"):
         grid_section(grid, lons, lats, topology="MOM-tripolar")
     i_c, _, _, _ = grid_section(grid, lons, lats, topology="latlon")
     assert len(i_c) > 1
