@@ -103,7 +103,8 @@ def uvindices_from_qindices(grid, i_c, j_c):
 
 def uvcoords_from_uvindices(grid, uvindices):
     """
-    Find the (lons,lats) coordinates of the N-1 velocity points defined by `uvindices` (returned by `uvindices_from_qindices`).
+    Find the (lons,lats) coordinates of the velocity points defined by `uvindices` (returned by `uvindices_from_qindices`):
+    one for each of them, which is fewer than N-1 for a section of N vorticity points that crosses a tripolar fold.
     Assumes the names of longitude and latitude coordinates in `grid` contain the sub-strings "lon" and "lat", respectively,
     but otherwise finds the names using `grid` metadata.
 
@@ -219,6 +220,9 @@ def uvcoords_from_qindices(grid, i_c, j_c):
     --------
     lons : np.ndarray(float)
     lats : np.ndarray(float)
+        One per velocity point, as returned by `uvindices_from_qindices`: N-1 for N vorticity points, or fewer
+        if the section crosses a tripolar fold (the crossing point is listed twice and has no velocity point
+        between its two indices).
     """
     return uvcoords_from_uvindices(
         grid,
