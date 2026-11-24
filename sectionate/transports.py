@@ -165,7 +165,7 @@ def uvcoords_from_uvindices(grid, uvindices):
             elif (f"geolon_corner" in corner_names) and (f"geolat_center" in center_names):
                 lon = ds[corner_names[f"geolon_corner"]].isel({
                     coords["X"]["corner"]:i,
-                    coords["Y"]["corner"]:j
+                    coords["Y"]["corner"]:wrap_corner_idx(j, grid, "Y")
                 }).values
                 lat = ds[center_names[f"geolat_center"]].isel({
                     coords["X"]["center"]:wrap_idx(i, grid, "X"),
@@ -189,8 +189,10 @@ def uvcoords_from_uvindices(grid, uvindices):
                     coords["X"]["center"]:wrap_idx(i, grid, "X"),
                     coords["Y"]["center"]:wrap_idx(j, grid, "Y")
                 }).values
+                # On a non-symmetric grid, the "X" index of a V point at the periodic seam is one past
+                # the last vorticity point, so it has to be wrapped before indexing a corner variable.
                 lat = ds[corner_names[f"geolat_corner"]].isel({
-                    coords["X"]["corner"]:i,
+                    coords["X"]["corner"]:wrap_corner_idx(i, grid, "X"),
                     coords["Y"]["corner"]:j
                 }).values
             else:
@@ -546,4 +548,23 @@ def wrap_idx(idx, grid, axis):
         idx = np.mod(idx, grid._ds[coords[axis]["center"]].size)
     else:
         idx = np.minimum(idx, grid._ds[coords[axis]["center"]].size-1)
+    return idx
+
+
+def wrap_corner_idx(idx, grid, axis):
+    """
+    As `wrap_idx`, but for an index into the corner (vorticity-point) dimension of `axis`, whose size
+    differs from that of the center dimension on a symmetric grid.
+
+    On a periodic non-symmetric grid the index wraps around. On a symmetric grid the corner dimension
+    includes the repeated periodic point, so every index that can arise is already valid and is only
+    clipped, as on a non-periodic grid.
+    """
+    coords = coord_dict(grid)
+    n_corner = grid._ds[coords[axis]["corner"]].size
+    n_center = grid._ds[coords[axis]["center"]].size
+    if (grid.axes[axis]._boundary == "periodic") and (n_corner == n_center):
+        idx = np.mod(idx, n_corner)
+    else:
+        idx = np.minimum(idx, n_corner-1)
     return idx

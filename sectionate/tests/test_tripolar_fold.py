@@ -162,3 +162,92 @@ def test_open_section_across_fold(symmetric):
     dpsi = psi[j_c[-1], i_c[-1]] - psi[j_c[0], i_c[0]]
     assert abs(dpsi) > 0.1
     assert np.isclose(abs(transport), abs(dpsi), rtol=0., atol=1.e-10)
+
+
+def test_tripolar_topology_on_grid_without_fold_raises():
+    """A regular latitude-longitude grid has no fold: say so, and say what to use instead."""
+    nx, ny = 36, 10
+    lon_c, lat_c = np.meshgrid(10.*np.arange(nx+1), -45. + 10.*np.arange(ny+1))
+    ds = xr.Dataset(coords={
+        "xh": np.arange(nx) + 0.5, "xq": np.arange(nx+1) + 0.,
+        "yh": np.arange(ny) + 0.5, "yq": np.arange(ny+1) + 0.,
+        "geolon_c": (("yq", "xq"), lon_c), "geolat_c": (("yq", "xq"), lat_c),
+    })
+    grid = xgcm.Grid(
+        ds,
+        coords={"X": {"center": "xh", "outer": "xq"}, "Y": {"center": "yh", "outer": "yq"}},
+        boundary={"X": "periodic", "Y": "extend"},
+        autoparse_metadata=False,
+    )
+    lons, lats = [20., 120.], [0., 20.]
+    with pytest.raises(ValueError, match=r"topology='latlon'.*regionate >= 0\.5\.6"):
+        grid_section(grid, lons, lats, topology="MOM-tripolar")
+    i_c, _, _, _ = grid_section(grid, lons, lats, topology="latlon")
+    assert len(i_c) > 1
+
+
+def test_periodic_seam_without_velocity_point_coordinates():
+    """
+    Without `geolon_u/v` and `geolat_u/v`, velocity-point coordinates come from the tracer and vorticity
+    points. On a non-symmetric grid, the V point at the periodic seam then has to wrap its "X" index.
+    """
+    grid = tripolar_grid(symmetric=False)
+    ds = grid._ds.drop_vars(["geolon_u", "geolat_u", "geolon_v", "geolat_v"])
+    grid = xgcm.Grid(
+        ds,
+        coords={"X": {"center": "xh", "right": "xq"}, "Y": {"center": "yh", "right": "yq"}},
+        boundary={"X": "periodic", "Y": "extend"},
+        autoparse_metadata=False,
+    )
+    lons = np.linspace(3., 363., 37)
+    transport, i_c, _ = section_transport(grid, lons, np.full(lons.size, 45.))
+    assert {0, NX-1} <= set(i_c.tolist())           # the section does cross the seam
+    assert abs(transport) < 1.e-10
+
+
+def tripolar_grid_offset_m1():
+    """
+    Non-symmetric tripolar grid whose poles sit on tracer-point columns rather than on vorticity points:
+    the vorticity points are on the odd columns of the supergrid, so the top-row point i folds onto
+    NX - 1 - i and no vorticity point is its own twin.
+    """
+    x, y = tripolar_supergrid()
+    x, y = x[:, :-1], y[:, :-1]                    # without the periodic repeat
+    lon_c, lat_c = x[::2, 1::2], y[::2, 1::2]
+    psi = np.random.default_rng(1).standard_normal(lon_c.shape)
+    psi[-1] = 0.5*(psi[-1] + psi[-1, ::-1])        # single-valued across the fold
+    u = psi[1:, :] - psi[:-1, :]                   # (yh, xq): between vorticity points j-1 and j
+    v = -(psi - np.roll(psi, 1, axis=1))[1:]       # (yq, xh): between vorticity points i-1 and i
+    ny = u.shape[0]
+    ds = xr.Dataset(
+        {"u": (("yh", "xq"), u), "v": (("yq", "xh"), v), "psi": (("yq", "xq"), psi[1:])},
+        coords={
+            "xh": np.arange(NX) + 0.5, "xq": np.arange(NX) + 1.,
+            "yh": np.arange(ny) + 0.5, "yq": np.arange(ny) + 1.,
+            "geolon_c": (("yq", "xq"), lon_c[1:]), "geolat_c": (("yq", "xq"), lat_c[1:]),
+            "geolon": (("yh", "xh"), x[1::2, ::2]), "geolat": (("yh", "xh"), y[1::2, ::2]),
+            "geolon_u": (("yh", "xq"), x[1::2, 1::2]), "geolat_u": (("yh", "xq"), y[1::2, 1::2]),
+            "geolon_v": (("yq", "xh"), x[2::2, ::2]), "geolat_v": (("yq", "xh"), y[2::2, ::2]),
+        },
+    )
+    return xgcm.Grid(
+        ds,
+        coords={"X": {"center": "xh", "right": "xq"}, "Y": {"center": "yh", "right": "yq"}},
+        boundary={"X": "periodic", "Y": "extend"},
+        autoparse_metadata=False,
+    )
+
+
+def test_fold_partner_offset_between_vorticity_points():
+    from sectionate.section import fold_partner_offset
+    grid = tripolar_grid_offset_m1()
+    assert fold_partner_offset(grid._ds.geolon_c.values, grid._ds.geolat_c.values) == -1
+
+
+@pytest.mark.parametrize("lat", [65., 75., 85.])
+def test_latitude_circle_across_fold_with_offset_m1(lat):
+    grid = tripolar_grid_offset_m1()
+    lons = np.linspace(3., 363., 37)
+    transport, _, j_c = section_transport(grid, lons, np.full(lons.size, lat))
+    assert j_c.max() == grid._ds.yq.size - 1        # the section does reach the fold
+    assert abs(transport) < 1.e-10
